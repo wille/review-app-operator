@@ -1,0 +1,23 @@
+# permissions for end users to view reviewapps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: rac2
+    app.kubernetes.io/managed-by: kustomize
+  name: reviewapp-viewer-role
+rules:
+- apiGroups:
+  - rac.william.nu
+  resources:
+  - reviewapps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - rac.william.nu
+  resources:
+  - reviewapps/status
+  verbs:
+  - get

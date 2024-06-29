@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- rac.william.nu_v1alpha1_reviewapp.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
