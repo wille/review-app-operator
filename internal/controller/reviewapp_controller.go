@@ -22,7 +22,6 @@ import (
 
 	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	networkingv1 "k8s.io/api/networking/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,8 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	"k8s.io/apimachinery/pkg/api/equality"
 )
 
 const jobOwnerKey = ".metadata.controller"
@@ -108,72 +105,11 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// var s keda.ScaledObject
 	// log.Info(s)
 
-	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
-	// 	job.Annotations[k] = v
-	// }
-	// job.Annotations[scheduledTimeAnnotation] = scheduledTime.Format(time.RFC3339)
-	// for k, v := range cronJob.Spec.JobTemplate.Labels {
-	// 	job.Labels[k] = v
-	// }
-
-	// for _, childDeployment := range childDeployments.Items {
-	// 	if err := r.Delete(ctx, &childDeployment); err != nil {
-	// 		log.Error(err, "unable to delete child Deployment", "deployment", childDeployment)
-	// 		return ctrl.Result{}, err
-	// 	}
-	// }
-
-	// if err := r.syncDeployments(ctx, &req, reviewApp); err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-
-	// if err := r.syncIngresses(ctx, &req, reviewApp); err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-
-	// List all PullRequests referencing this ReviewApp
-	var prs racwilliamnuv1alpha1.PullRequestList
-	if err := r.List(ctx, &prs, client.InNamespace(req.Namespace), client.MatchingFields{
-		"spec.reviewAppRef": reviewApp.Name,
-	}); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// for _, pullRequest := range prs.Items {
-	// var list appsv1.DeploymentList
-	// if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-
-	// r.syncDeployments(ctx, &req, reviewApp, &pullRequest)
-	// }
-
-	// log.Info("Reconciled ReviewApp")
-
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &networkingv1.Ingress{}, jobOwnerKey, func(rawObj client.Object) []string {
-		// grab the job object, extract the owner...
-		job := rawObj.(*networkingv1.Ingress)
-		owner := metav1.GetControllerOf(job)
-		if owner == nil {
-			return nil
-		}
-		// ...make sure it's a CronJob...
-		// TODO check APIVERSION!
-		if owner.Kind != "ReviewApp" {
-			return nil
-		}
-
-		// ...and if so, return it
-		return []string{owner.Name}
-	}); err != nil {
-		return err
-	}
-
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &racwilliamnuv1alpha1.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
 		// grab the job object, extract the owner...
 		job := rawObj.(*racwilliamnuv1alpha1.PullRequest)
@@ -196,72 +132,7 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&racwilliamnuv1alpha1.ReviewApp{}).
 		Owns(&racwilliamnuv1alpha1.PullRequest{}).
-		Owns(&networkingv1.Ingress{}).
 		Complete(r)
-}
-
-func (r *ReviewAppReconciler) syncIngresses(ctx context.Context, req *ctrl.Request, reviewApp *racwilliamnuv1alpha1.ReviewApp) error {
-	log := log.FromContext(ctx)
-
-	var list networkingv1.IngressList
-	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		return err
-	}
-
-	if reviewApp.Spec.Ingresses == nil {
-		return nil
-	}
-
-	// Loop over existing ingresses and update if needed
-Test:
-	for _, ingressSpec := range reviewApp.Spec.Ingresses {
-		ingressName := reviewApp.Name + "-" + ingressSpec.Name
-
-		desiredLabels := getResourceLabels(reviewApp, ingressName, true)
-
-		objectMeta := metav1.ObjectMeta{
-			Labels:      desiredLabels,
-			Annotations: reviewApp.Annotations,
-			Name:        ingressName,
-			Namespace:   reviewApp.Namespace,
-		}
-
-		desiredIngress := &networkingv1.Ingress{
-			ObjectMeta: objectMeta,
-			Spec:       ingressSpec.Spec,
-		}
-
-		for _, activeIngress := range list.Items {
-			if activeIngress.Name == ingressName {
-				patch := client.MergeFrom(activeIngress.DeepCopy())
-
-				// Deployment labels or spec differs from desired spec
-				if !equality.Semantic.DeepDerivative(desiredIngress.Spec, activeIngress.Spec) {
-					activeIngress.Spec = desiredIngress.Spec
-
-					if err := r.Patch(ctx, &activeIngress, patch); err != nil {
-						return err
-					}
-
-					log.Info("ingress updated", "ingressName", ingressName)
-				}
-
-				continue Test
-			}
-		}
-
-		log.Info("Creating ingress", "ingressName", ingressName)
-
-		if err := ctrl.SetControllerReference(reviewApp, desiredIngress, r.Scheme); err != nil {
-			return err
-		}
-		if err := r.Create(ctx, desiredIngress); err != nil {
-			log.Error(err, "unable to create ingress", "ingress", desiredIngress)
-			return err
-		}
-	}
-
-	return nil
 }
 
 // getResourceLabels returns the labels for all ReviewApp child resources

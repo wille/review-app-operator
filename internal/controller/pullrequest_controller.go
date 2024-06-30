@@ -21,6 +21,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -146,14 +147,14 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		replicas := int32(1)
 
 		desiredDeployment := &appsv1.Deployment{
-			ObjectMeta: objectMeta,
+			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: appsv1.DeploymentSpec{
 				Replicas: &replicas,
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
 				Template: corev1.PodTemplateSpec{
-					ObjectMeta: objectMeta,
+					ObjectMeta: *objectMeta.DeepCopy(),
 					Spec:       deploymentSpec.Spec,
 				},
 			},
@@ -219,8 +220,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
-			// Service for deployment not found, create it and set the deployment as owner
-			if err := ctrl.SetControllerReference(&runningDeployment, desiredSvc, r.Scheme); err != nil {
+			// Service for deployment not found, create it
+			if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -244,6 +245,81 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 				log.Info("Service updated", "serviceName", deploymentName)
 			}
+		}
+	}
+
+	pathType := networkingv1.PathTypePrefix
+	desiredIngress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:    getResourceLabels(&reviewApp, utils.GetResourceNameFrom(&reviewApp, pr), true),
+			Name:      utils.GetResourceNameFrom(&reviewApp, pr),
+			Namespace: reviewApp.Namespace,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: nil,
+			DefaultBackend:   nil,
+			Rules:            []networkingv1.IngressRule{},
+		},
+	}
+
+	for _, deploymentSpec := range reviewApp.Spec.Deployments {
+		host := deploymentSpec.Name + ".test.com"
+		serviceName := utils.GetResourceName(utils.GetResourceNameFrom(&reviewApp, pr), deploymentSpec.Name)
+
+		rule := networkingv1.IngressRule{
+			Host: host,
+			IngressRuleValue: networkingv1.IngressRuleValue{
+				HTTP: &networkingv1.HTTPIngressRuleValue{
+					Paths: []networkingv1.HTTPIngressPath{
+						{
+							Path:     "/",
+							PathType: &pathType,
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: serviceName,
+									Port: networkingv1.ServiceBackendPort{
+										Number: 80,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		desiredIngress.Spec.Rules = append(desiredIngress.Spec.Rules, rule)
+	}
+
+	var activeIngress networkingv1.Ingress
+	if err := r.Get(ctx, types.NamespacedName{Name: utils.GetResourceNameFrom(&reviewApp, pr), Namespace: reviewApp.Namespace}, &activeIngress); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+
+		if err := ctrl.SetControllerReference(pr, desiredIngress, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		if err := r.Create(ctx, desiredIngress); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		log.Info("Ingress created", "ingressName", desiredIngress.ObjectMeta.Name)
+	} else {
+		// Ingress labels or spec differs from desired spec
+		if !equality.Semantic.DeepDerivative(desiredIngress.Spec, activeIngress.Spec) ||
+			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Labels, activeIngress.ObjectMeta.Labels) {
+			patch := client.MergeFrom(activeIngress.DeepCopy())
+
+			activeIngress.ObjectMeta.Labels = desiredIngress.ObjectMeta.Labels
+			activeIngress.Spec = desiredIngress.Spec
+
+			if err := r.Patch(ctx, &activeIngress, patch); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Ingress updated", "ingressName", activeIngress.ObjectMeta.Name)
 		}
 	}
 
@@ -305,6 +381,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&racwilliamnuv1alpha1.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.Ingress{}).
 		// Watch for changes to ReviewApp resources
 		Watches(
 			&racwilliamnuv1alpha1.ReviewApp{},
