@@ -25,7 +25,7 @@ spec:
           - name: nginx
             image: nginx:1.20
             ports:
-              - containerPort: 80
+              - containerPort: 8080
     # A staging environment pointing to your staging database
   ingresses:
     - name: myingress

@@ -25,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -126,6 +127,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
+	// Loop all desired deployments in the ReviewApp spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(utils.GetResourceNameFrom(&reviewApp, pr), deploymentSpec.Name)
 
@@ -192,6 +194,60 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			log.Info("Deployment created", "deploymentName", deploymentName)
 		}
+
+		// Add all ports from all containers to the service
+		ports := []corev1.ServicePort{}
+		for _, container := range deploymentSpec.Spec.Containers {
+			for _, port := range container.Ports {
+				// TODO Name must be set on a svc if there is more than 1 port
+				ports = append(ports, corev1.ServicePort{
+					Name:       port.Name,
+					Port:       port.ContainerPort,
+					TargetPort: intstr.FromInt32(port.ContainerPort),
+				})
+			}
+		}
+
+		desiredSvc := &corev1.Service{
+			ObjectMeta: objectMeta,
+			Spec: corev1.ServiceSpec{
+				Selector: selectorLabels,
+				Type:     corev1.ServiceTypeClusterIP,
+				Ports:    ports,
+			},
+		}
+		var activeSvc corev1.Service
+		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &activeSvc); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+
+			// Service for deployment not found, create it and take ownership
+			if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Create(ctx, desiredSvc); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Service created", "serviceName", deploymentName)
+		} else {
+			// Service labels or spec differs from desired spec
+			if !equality.Semantic.DeepDerivative(desiredSvc.Spec, activeSvc.Spec) ||
+				!equality.Semantic.DeepEqual(desiredLabels, activeSvc.ObjectMeta.Labels) {
+				patch := client.MergeFrom(activeSvc.DeepCopy())
+
+				activeSvc.ObjectMeta.Labels = desiredLabels
+				activeSvc.Spec = desiredSvc.Spec
+
+				if err := r.Patch(ctx, &activeSvc, patch); err != nil {
+					return ctrl.Result{}, err
+				}
+
+				log.Info("Service updated", "serviceName", deploymentName)
+			}
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -232,6 +288,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&racwilliamnuv1alpha1.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		// Watch for changes to ReviewApp resources
 		Watches(
 			&racwilliamnuv1alpha1.ReviewApp{},
