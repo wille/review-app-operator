@@ -22,8 +22,6 @@ import (
 
 	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,13 +123,30 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 	}
 	// }
 
-	if err := r.syncDeployments(ctx, &req, reviewApp); err != nil {
+	// if err := r.syncDeployments(ctx, &req, reviewApp); err != nil {
+	// 	return ctrl.Result{}, err
+	// }
+
+	// if err := r.syncIngresses(ctx, &req, reviewApp); err != nil {
+	// 	return ctrl.Result{}, err
+	// }
+
+	// List all PullRequests referencing this ReviewApp
+	var prs racwilliamnuv1alpha1.PullRequestList
+	if err := r.List(ctx, &prs, client.InNamespace(req.Namespace), client.MatchingFields{
+		"spec.reviewAppRef": reviewApp.Name,
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.syncIngresses(ctx, &req, reviewApp); err != nil {
-		return ctrl.Result{}, err
-	}
+	// for _, pullRequest := range prs.Items {
+	// var list appsv1.DeploymentList
+	// if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
+	// 	return ctrl.Result{}, err
+	// }
+
+	// r.syncDeployments(ctx, &req, reviewApp, &pullRequest)
+	// }
 
 	// log.Info("Reconciled ReviewApp")
 
@@ -140,25 +155,6 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &appsv1.Deployment{}, jobOwnerKey, func(rawObj client.Object) []string {
-		// grab the job object, extract the owner...
-		job := rawObj.(*appsv1.Deployment)
-		owner := metav1.GetControllerOf(job)
-		if owner == nil {
-			return nil
-		}
-		// ...make sure it's a CronJob...
-		// TODO check APIVERSION!
-		if owner.Kind != "ReviewApp" {
-			return nil
-		}
-
-		// ...and if so, return it
-		return []string{owner.Name}
-	}); err != nil {
-		return err
-	}
-
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &networkingv1.Ingress{}, jobOwnerKey, func(rawObj client.Object) []string {
 		// grab the job object, extract the owner...
 		job := rawObj.(*networkingv1.Ingress)
@@ -178,9 +174,28 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &racwilliamnuv1alpha1.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
+		// grab the job object, extract the owner...
+		job := rawObj.(*racwilliamnuv1alpha1.PullRequest)
+		owner := metav1.GetControllerOf(job)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a CronJob...
+		// TODO check APIVERSION!
+		if owner.Kind != "ReviewApp" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&racwilliamnuv1alpha1.ReviewApp{}).
-		Owns(&appsv1.Deployment{}).
+		Owns(&racwilliamnuv1alpha1.PullRequest{}).
 		Owns(&networkingv1.Ingress{}).
 		Complete(r)
 }
@@ -242,96 +257,6 @@ Test:
 		}
 		if err := r.Create(ctx, desiredIngress); err != nil {
 			log.Error(err, "unable to create ingress", "ingress", desiredIngress)
-			return err
-		}
-	}
-
-	return nil
-}
-
-// syncDeployments syncs all active deployments defined in the ReviewApp spec
-func (r *ReviewAppReconciler) syncDeployments(ctx context.Context, req *ctrl.Request, reviewApp *racwilliamnuv1alpha1.ReviewApp) error {
-	log := log.FromContext(ctx)
-
-	var list appsv1.DeploymentList
-	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		return err
-	}
-
-	if reviewApp.Spec.Deployments == nil {
-		return nil
-	}
-
-	// Loop over existing deployments and update if needed
-
-Test:
-	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		deploymentName := reviewApp.Name + "-" + deploymentSpec.Name
-
-		desiredLabels := getResourceLabels(reviewApp, deploymentName, true)
-
-		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
-		selectorLabels := getResourceLabels(reviewApp, deploymentName, false)
-
-		objectMeta := metav1.ObjectMeta{
-			Labels:      desiredLabels,
-			Annotations: reviewApp.Annotations,
-			Name:        deploymentName,
-			Namespace:   reviewApp.Namespace,
-		}
-
-		replicas := int32(1)
-
-		desiredDeployment := &appsv1.Deployment{
-			ObjectMeta: objectMeta,
-			Spec: appsv1.DeploymentSpec{
-				Replicas: &replicas,
-				Selector: &metav1.LabelSelector{
-					MatchLabels: selectorLabels,
-				},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: objectMeta,
-					Spec:       deploymentSpec.Spec,
-				},
-			},
-		}
-
-		for _, runningDeployment := range list.Items {
-			if runningDeployment.Name == deploymentName {
-				patch := client.MergeFrom(runningDeployment.DeepCopy())
-
-				// Detect if desired labels have changed
-				if !equality.Semantic.DeepEqual(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) {
-					if err := r.Delete(ctx, &runningDeployment); err != nil {
-						return err
-					}
-
-					log.Info("Labels changed, recreating Deployment since PodSpec.Selector is immutable")
-					break Test
-				}
-
-				// Deployment labels or spec differs from desired spec
-				if !equality.Semantic.DeepDerivative(desiredDeployment.Spec, runningDeployment.Spec) {
-					runningDeployment.Spec = desiredDeployment.Spec
-
-					if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
-						return err
-					}
-
-					log.Info("Deployment updated", "deploymentName", deploymentName)
-				}
-
-				continue Test
-			}
-		}
-
-		log.Info("Creating deployment", "deploymentName", deploymentName)
-
-		if err := ctrl.SetControllerReference(reviewApp, desiredDeployment, r.Scheme); err != nil {
-			return err
-		}
-		if err := r.Create(ctx, desiredDeployment); err != nil {
-			log.Error(err, "unable to create deployment", "deployment", desiredDeployment)
 			return err
 		}
 	}

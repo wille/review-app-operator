@@ -25,6 +25,32 @@ rules:
 - apiGroups:
   - rac.william.nu
   resources:
+  - pullrequests
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rac.william.nu
+  resources:
+  - pullrequests/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - rac.william.nu
+  resources:
+  - pullrequests/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - rac.william.nu
+  resources:
   - reviewapps
   verbs:
   - create

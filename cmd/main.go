@@ -36,7 +36,6 @@ import (
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
 	"github.com/wille/rac/internal/controller"
-	"github.com/wille/rac/internal/controller/github"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -131,6 +130,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ReviewApp")
 		os.Exit(1)
 	}
+	if err = (&controller.PullRequestReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PullRequest")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -141,7 +147,15 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
-	github.Create("reviewapp-sample", "nginx:1.20")
+
+	// if err := controller.CreatePullRequest("reviewapp-sample", "master", "nginx:1.19"); err != nil {
+	// 	setupLog.Error(err, "unable to create pull request")
+	// 	os.Exit(1)
+	// }
+	// if err := controller.CreatePullRequest("reviewapp-sample", "dev", "nginx:1.20"); err != nil {
+	// 	setupLog.Error(err, "unable to create pull request")
+	// 	os.Exit(1)
+	// }
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

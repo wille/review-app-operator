@@ -1,0 +1,8 @@
+apiVersion: rac.william.nu/v1alpha1
+kind: PullRequest
+metadata:
+  labels:
+    randomlabel: ok
+  name: pullrequest-sample
+spec:
+  reviewAppRef: reviewapp-sample
