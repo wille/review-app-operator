@@ -159,31 +159,12 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			},
 		}
 
-		createNew := true
-
-		for _, runningDeployment := range list.Items {
-			if runningDeployment.ObjectMeta.Name != deploymentName {
-				continue
+		var runningDeployment appsv1.Deployment
+		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
 			}
-			patch := client.MergeFrom(runningDeployment.DeepCopy())
 
-			// Deployment labels or spec differs from desired spec
-			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec, runningDeployment.Spec) ||
-				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) {
-				runningDeployment.ObjectMeta.Labels = desiredLabels
-				runningDeployment.Spec = desiredDeployment.Spec
-
-				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
-					return ctrl.Result{}, err
-				}
-
-				log.Info("Deployment updated", "deploymentName", deploymentName)
-			}
-			createNew = false
-			break
-		}
-
-		if createNew {
 			if err := ctrl.SetControllerReference(pr, desiredDeployment, r.Scheme); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -193,6 +174,22 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 
 			log.Info("Deployment created", "deploymentName", deploymentName)
+		} else {
+
+			// Deployment labels or spec differs from desired spec
+			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec, runningDeployment.Spec) ||
+				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) {
+				patch := client.MergeFrom(runningDeployment.DeepCopy())
+
+				runningDeployment.ObjectMeta.Labels = desiredLabels
+				runningDeployment.Spec = desiredDeployment.Spec
+
+				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
+					return ctrl.Result{}, err
+				}
+
+				log.Info("Deployment updated", "deploymentName", deploymentName)
+			}
 		}
 
 		// Add all ports from all containers to the service
@@ -222,8 +219,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
-			// Service for deployment not found, create it and take ownership
-			if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
+			// Service for deployment not found, create it and set the deployment as owner
+			if err := ctrl.SetControllerReference(&runningDeployment, desiredSvc, r.Scheme); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -265,6 +262,25 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 		// TODO check APIVERSION!
 		if owner.Kind != "PullRequest" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return err
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Service{}, pullRequestOwnerKey, func(rawObj client.Object) []string {
+		// grab the job object, extract the owner...
+		job := rawObj.(*corev1.Service)
+		owner := metav1.GetControllerOf(job)
+		if owner == nil {
+			return nil
+		}
+
+		// TODO check APIVERSION!
+		if owner.Kind != "Deployment" {
 			return nil
 		}
 
