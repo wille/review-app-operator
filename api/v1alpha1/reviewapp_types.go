@@ -27,13 +27,23 @@ type GithubConfig struct {
 }
 
 type Deployments struct {
-	Name string         `json:"name"`
-	Spec corev1.PodSpec `json:"spec"`
+	Name                string         `json:"name"`
+	TargetContainerName string         `json:"targetContainerName"`
+	TargetPort          int32          `json:"targetPort"`
+	Spec                corev1.PodSpec `json:"spec"`
 }
 
-type Ingresses struct {
-	Name string                   `json:"name"`
-	Spec networkingv1.IngressSpec `json:"spec"`
+type IngressConfig struct {
+	HostnameSuffix string `json:"hostnameSuffix"`
+
+	// +optional
+	IngressClassName *string `json:"ingressClassName,omitempty"`
+
+	// +optional
+	DefaultBackend *networkingv1.IngressBackend `json:"defaultBackend,omitempty"`
+
+	// +optional
+	TLSSecretName string `json:"tlsSecretName"`
 }
 
 // ReviewAppSpec defines the desired state of ReviewApp
@@ -46,8 +56,8 @@ type ReviewAppSpec struct {
 
 	Deployments []Deployments `json:"deployments"`
 
-	// +kubebuilder:validation:Optional
-	Ingresses []Ingresses `json:"ingresses"`
+	// +optional
+	IngressConfig `json:"ingressConfig"`
 }
 
 // ReviewAppStatus defines the observed state of ReviewApp

@@ -60,6 +60,13 @@ type PullRequestReconciler struct {
 
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get
+
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=services/status,verbs=get
+
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses/status,verbs=get
+
 // +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -113,7 +120,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		found := false
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			name := utils.GetResourceName(utils.GetResourceNameFrom(&reviewApp, pr), deploymentSpec.Name)
+			name := utils.GetResourceName(pr.Name, deploymentSpec.Name)
 			if runningDeployment.ObjectMeta.Name == name {
 				found = true
 				break
@@ -130,7 +137,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Loop all desired deployments in the ReviewApp spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		deploymentName := utils.GetResourceName(utils.GetResourceNameFrom(&reviewApp, pr), deploymentSpec.Name)
+		deploymentName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
 
 		desiredLabels := getResourceLabels(&reviewApp, deploymentName, true)
 
@@ -138,9 +145,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		selectorLabels := getResourceLabels(&reviewApp, deploymentName, false)
 
 		objectMeta := metav1.ObjectMeta{
+			Name: deploymentName,
+
 			Labels:      desiredLabels,
 			Annotations: reviewApp.Annotations,
-			Name:        deploymentName,
 			Namespace:   reviewApp.Namespace,
 		}
 
@@ -158,6 +166,17 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					Spec:       deploymentSpec.Spec,
 				},
 			},
+		}
+
+		// Update the target container image with the latest PR image if any is set on the PullRequest
+		if pr.Spec.ImageName != "" {
+			for i := 0; i < len(desiredDeployment.Spec.Template.Spec.Containers); i++ {
+				container := &desiredDeployment.Spec.Template.Spec.Containers[i]
+				if deploymentSpec.TargetContainerName == container.Name {
+					container.Image = pr.Spec.ImageName
+					break
+				}
+			}
 		}
 
 		var runningDeployment appsv1.Deployment
@@ -194,16 +213,12 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		// Add all ports from all containers to the service
-		ports := []corev1.ServicePort{}
-		for _, container := range deploymentSpec.Spec.Containers {
-			for _, port := range container.Ports {
-				// TODO Name must be set on a svc if there is more than 1 port
-				ports = append(ports, corev1.ServicePort{
-					Name:       port.Name,
-					Port:       port.ContainerPort,
-					TargetPort: intstr.FromInt32(port.ContainerPort),
-				})
-			}
+		ports := []corev1.ServicePort{
+			{
+				Name:       "http",
+				Port:       deploymentSpec.TargetPort,
+				TargetPort: intstr.FromInt(int(deploymentSpec.TargetPort)),
+			},
 		}
 
 		desiredSvc := &corev1.Service{
@@ -214,6 +229,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Ports:    ports,
 			},
 		}
+
+		// If a .spec.deployment.name changes, the old service will not be cleaned up
 		var activeSvc corev1.Service
 		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &activeSvc); err != nil {
 			if !apierrors.IsNotFound(err) {
@@ -256,15 +273,23 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Namespace: reviewApp.Namespace,
 		},
 		Spec: networkingv1.IngressSpec{
-			IngressClassName: nil,
-			DefaultBackend:   nil,
+			IngressClassName: reviewApp.Spec.IngressConfig.IngressClassName,
+			DefaultBackend:   reviewApp.Spec.IngressConfig.DefaultBackend,
 			Rules:            []networkingv1.IngressRule{},
+			TLS:              []networkingv1.IngressTLS{},
 		},
 	}
 
+	if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
+		desiredIngress.Spec.TLS = append(desiredIngress.Spec.TLS, networkingv1.IngressTLS{
+			SecretName: reviewApp.Spec.IngressConfig.TLSSecretName,
+			Hosts:      []string{},
+		})
+	}
+
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		host := deploymentSpec.Name + ".test.com"
-		serviceName := utils.GetResourceName(utils.GetResourceNameFrom(&reviewApp, pr), deploymentSpec.Name)
+		host := utils.GetResourceName(pr.Name, deploymentSpec.Name) + reviewApp.Spec.IngressConfig.HostnameSuffix
+		serviceName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
 
 		rule := networkingv1.IngressRule{
 			Host: host,
@@ -278,7 +303,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 								Service: &networkingv1.IngressServiceBackend{
 									Name: serviceName,
 									Port: networkingv1.ServiceBackendPort{
-										Number: 80,
+										Number: deploymentSpec.TargetPort,
 									},
 								},
 							},
@@ -289,6 +314,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		desiredIngress.Spec.Rules = append(desiredIngress.Spec.Rules, rule)
+
+		if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
+			desiredIngress.Spec.TLS[0].Hosts = append(desiredIngress.Spec.TLS[0].Hosts, host)
+		}
 	}
 
 	var activeIngress networkingv1.Ingress

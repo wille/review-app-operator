@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	"github.com/wille/rac/cmd/webhooks"
 	"github.com/wille/rac/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -148,14 +149,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// if err := controller.CreatePullRequest("reviewapp-sample", "master", "nginx:1.19"); err != nil {
-	// 	setupLog.Error(err, "unable to create pull request")
-	// 	os.Exit(1)
-	// }
-	// if err := controller.CreatePullRequest("reviewapp-sample", "dev", "nginx:1.20"); err != nil {
-	// 	setupLog.Error(err, "unable to create pull request")
-	// 	os.Exit(1)
-	// }
+	go webhooks.Run()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

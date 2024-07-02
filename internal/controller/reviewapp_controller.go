@@ -31,8 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const jobOwnerKey = ".metadata.controller"
-
 // ReviewAppReconciler reconciles a ReviewApp object
 type ReviewAppReconciler struct {
 	client.Client
@@ -104,6 +102,15 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// var s keda.ScaledObject
 	// log.Info(s)
+	var list racwilliamnuv1alpha1.PullRequestList
+	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{"spec.reviewAppRef": req.Name}); err != nil {
+		log.Error(err, "unable to list child Jobs")
+		return ctrl.Result{}, err
+	}
+
+	// if err := r.Status().Update(ctx, reviewApp); err != nil {
+	// 	return ctrl.Result{}, err
+	// }
 
 	return ctrl.Result{}, nil
 }

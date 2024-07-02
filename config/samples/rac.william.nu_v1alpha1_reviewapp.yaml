@@ -7,9 +7,15 @@ metadata:
 spec:
   github:
     githubToken: "githubToken"
+  ingressConfig:
+    hostnameSuffix: ".pr.bitrefill.com"
+    # ingressClassName:
+    # defaultBackend:
   deployments:
     # A staging environment pointing to your read only production database
-    - name: prod1
+    - name: prod
+      targetContainerName: nginx
+      targetPort: 80
       spec:
         # It's recommended to run your staging containers on a separate node pool
         # nodeSelector:
@@ -20,6 +26,8 @@ spec:
             ports:
               - containerPort: 80
     - name: staging
+      targetContainerName: nginx
+      targetPort: 8080
       spec:
         containers:
           - name: nginx
@@ -27,17 +35,3 @@ spec:
             ports:
               - containerPort: 8080
     # A staging environment pointing to your staging database
-  ingresses:
-    - name: myingress
-      spec:
-        rules:
-          - host: test
-            http:
-              paths:
-                - pathType: Prefix
-                  path: /
-                  backend:
-                    service:
-                      name: myservice
-                      port:
-                        number: 80

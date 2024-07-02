@@ -28,7 +28,7 @@ spec:
             type: object
           spec:
             properties:
-              branchName:
+              imageName:
                 type: string
               reviewAppRef:
                 type: string

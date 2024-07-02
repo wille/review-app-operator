@@ -28,7 +28,7 @@ type PullRequestSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	BranchName string `json:"branchName,omitempty"`
+	ImageName string `json:"imageName,omitempty"`
 
 	// The parent ReviewApp
 	ReviewAppRef string `json:"reviewAppRef,omitempty"`
