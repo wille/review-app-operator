@@ -1,0 +1,29 @@
+webhookIngress:
+  annotations: {}
+  host: test.com
+controllerManager:
+  manager:
+    args:
+      - --leader-elect
+      - --health-probe-bind-address=:8081
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+    image: controller
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+  ports:
+    - port: 80
+      targetPort: 80
+  replicas: 1
+  serviceAccount:
+    annotations: {}
+  type: ClusterIP
+kubernetesClusterDomain: cluster.local

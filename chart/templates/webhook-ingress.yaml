@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "chart.fullname" . }}-controller-manager
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+  annotations:
+  {{ toYaml .Values.webhookIngress.annotations | nindent 4 }}
+spec:
+  tls:
+  - hosts:
+    - '{{ .Values.webhookIngress.host }}'
+    secretName: {{ include "chart.fullname" . }}-webhook-server-secret
+  rules:
+  - host: '{{ .Values.webhookIngress.host }}'
+    http:
+      paths:
+      - backend:
+          service:
+            name: '{{ include "chart.fullname" . }}-controller-manager'
+            port:
+              number: 80
+        path: /
+        pathType: Prefix

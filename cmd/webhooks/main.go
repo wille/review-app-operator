@@ -23,14 +23,18 @@ import (
 	"github.com/wille/rac/internal/utils"
 )
 
-var webhookSecret = "6969"
+var webhookSecret = "secret"
 
 func validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
 
 	_hmac := hmac.New(sha256.New, []byte(webhookSecret))
 
-	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(body))
+	if _, err := _hmac.Write(body); err != nil {
+		return err
+	}
+
+	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(nil))
 
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
 		fmt.Printf("Invalid signature %s, expected=%s\n", signature, expectedSignature)
