@@ -1,6 +1,6 @@
 webhookIngress:
   annotations: {}
-  host: test.com
+  host: ""
 controllerManager:
   manager:
     args:
@@ -11,7 +11,7 @@ controllerManager:
       capabilities:
         drop:
           - ALL
-    image: controller
+    image: ghcr.io/wille/review-app-operator
     resources:
       limits:
         cpu: 500m
@@ -19,9 +19,6 @@ controllerManager:
       requests:
         cpu: 10m
         memory: 64Mi
-  ports:
-    - port: 80
-      targetPort: 80
   replicas: 1
   serviceAccount:
     annotations: {}

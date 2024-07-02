@@ -12,13 +12,13 @@ spec:
     - '{{ .Values.webhookIngress.host }}'
     secretName: {{ include "chart.fullname" . }}-webhook-server-secret
   rules:
-  - host: '{{ .Values.webhookIngress.host }}'
+  - host: '{{ required "webhookIngress.host must be set" .Values.webhookIngress.host }}'
     http:
       paths:
       - backend:
           service:
             name: '{{ include "chart.fullname" . }}-controller-manager'
             port:
-              number: 80
+              number: 8080
         path: /
         pathType: Prefix

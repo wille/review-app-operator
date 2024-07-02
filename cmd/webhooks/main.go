@@ -102,7 +102,8 @@ func Run() {
 		if err := c.Get(context.TODO(), types.NamespacedName{Name: reviewAppRef, Namespace: "default"}, &reviewApp); err != nil {
 			// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
 			if apierrors.IsNotFound(err) {
-				log.Error(err, "unable to find review app", "name", reviewAppRef)
+				log.Error(err, "Review app not found", "name", reviewAppRef)
+				http.Error(w, "Review app not found", http.StatusNotFound)
 				return
 			}
 
