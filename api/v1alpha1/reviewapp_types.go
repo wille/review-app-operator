@@ -29,7 +29,7 @@ type GithubConfig struct {
 type Deployments struct {
 	Name                string         `json:"name"`
 	TargetContainerName string         `json:"targetContainerName"`
-	TargetPort          int32          `json:"targetPort"`
+	TargetContainerPort int32          `json:"targetContainerPort"`
 	Spec                corev1.PodSpec `json:"spec"`
 }
 

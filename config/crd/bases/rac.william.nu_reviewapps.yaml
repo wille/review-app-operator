@@ -3594,14 +3594,14 @@ spec:
                       type: object
                     targetContainerName:
                       type: string
-                    targetPort:
+                    targetContainerPort:
                       format: int32
                       type: integer
                   required:
                   - name
                   - spec
                   - targetContainerName
-                  - targetPort
+                  - targetContainerPort
                   type: object
                 type: array
               github:

@@ -216,8 +216,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		ports := []corev1.ServicePort{
 			{
 				Name:       "http",
-				Port:       deploymentSpec.TargetPort,
-				TargetPort: intstr.FromInt(int(deploymentSpec.TargetPort)),
+				Port:       deploymentSpec.TargetContainerPort,
+				TargetPort: intstr.FromInt(int(deploymentSpec.TargetContainerPort)),
 			},
 		}
 
@@ -303,7 +303,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 								Service: &networkingv1.IngressServiceBackend{
 									Name: serviceName,
 									Port: networkingv1.ServiceBackendPort{
-										Number: deploymentSpec.TargetPort,
+										Number: deploymentSpec.TargetContainerPort,
 									},
 								},
 							},
