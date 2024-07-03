@@ -288,7 +288,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		host := utils.GetResourceName(pr.Name, deploymentSpec.Name) + reviewApp.Spec.IngressConfig.HostnameSuffix
+		host := utils.GetDeploymentHostname(&reviewApp, pr, deploymentSpec.Name)
 		serviceName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
 
 		rule := networkingv1.IngressRule{

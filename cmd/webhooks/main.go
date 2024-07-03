@@ -60,8 +60,31 @@ func validateWebhook(body []byte, r *http.Request) error {
 	}
 */
 type Webhook struct {
-	Ref   string `json:"ref"`
+	// ReviewAppName is the name of the Review App to update
+	ReviewAppName string `json:"reviewAppName"`
+
+	// ReviewAppNamespace is the namespace of the Review App to update
+	ReviewAppNamespace string `json:"reviewAppNamespace"`
+
+	// RepositoryURL is the repository url, eg https://github.com/wille/review-app-operator
+	RepositoryURL string `json:"repositoryUrl"`
+
+	// BranchName is the affected branch
+	BranchName string `json:"branchName"`
+
+	// PullRequestURL is the URL to the pull request
+	PullRequestURL string `json:"pullRequestUrl"`
+
+	// Image is the image to deploy
+	// Only used on POST hooks
 	Image string `json:"image"`
+
+	// Merged is if the PR is merged or closed
+	// Only used on DELETE hooks
+	Merged bool `json:"merged"`
+
+	// Sender is the Github user who initiated the action
+	Sender string `json:"sender"`
 }
 
 func Run() {
@@ -69,7 +92,7 @@ func Run() {
 
 	log := log.Log.WithName("webhooks")
 
-	handler.Handle("/v1/{reviewApp}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler.Handle("/v1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 		body, err := io.ReadAll(r.Body)
 
@@ -83,8 +106,6 @@ func Run() {
 			return
 		}
 
-		reviewAppRef := r.PathValue("reviewApp")
-
 		var webhook Webhook
 		if err := json.Unmarshal(body, &webhook); err != nil {
 			log.Error(err, "Error unmarshalling body")
@@ -92,17 +113,20 @@ func Run() {
 			return
 		}
 
-		pullRequest := webhook.Ref
+		branchName := webhook.BranchName
 
-		log := log.WithValues("reviewApp", reviewAppRef, "pullRequest", pullRequest)
+		log := log.WithValues("reviewApp", webhook.ReviewAppName, "pullRequest", branchName)
 
 		williamnuv1alpha1.AddToScheme(scheme.Scheme)
 		c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
 		reviewApp := williamnuv1alpha1.ReviewApp{}
-		if err := c.Get(context.TODO(), types.NamespacedName{Name: reviewAppRef, Namespace: "default"}, &reviewApp); err != nil {
+		if err := c.Get(context.TODO(), types.NamespacedName{
+			Name:      webhook.ReviewAppName,
+			Namespace: webhook.ReviewAppNamespace,
+		}, &reviewApp); err != nil {
 			// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
 			if apierrors.IsNotFound(err) {
-				log.Error(err, "Review app not found", "name", reviewAppRef)
+				log.Error(err, "Review app not found", "name", webhook.ReviewAppName)
 				http.Error(w, "Review app not found", http.StatusNotFound)
 				return
 			}
@@ -112,13 +136,16 @@ func Run() {
 			return
 		}
 
-		pullRequestResourceName := utils.GetResourceName(reviewAppRef, pullRequest)
+		pullRequestResourceName := utils.GetResourceName(reviewApp.Name, branchName)
 
 		switch r.Method {
 		case http.MethodDelete:
 			log.Info("Delete webhook received")
 
-			if err := reviewapp.DeletePullRequestByName(pullRequestResourceName); err != nil {
+			if err := reviewapp.DeletePullRequestByName(types.NamespacedName{
+				Name:      pullRequestResourceName,
+				Namespace: reviewApp.Namespace,
+			}); err != nil {
 				if apierrors.IsNotFound(err) {
 					http.Error(w, "Pull request not found", http.StatusNotFound)
 					return
@@ -133,14 +160,24 @@ func Run() {
 		case http.MethodPost:
 			log.Info("Create webhook received", "webhook", webhook)
 
-			if err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, pullRequestResourceName, williamnuv1alpha1.PullRequestSpec{
+			_, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
+				Name:      pullRequestResourceName,
+				Namespace: reviewApp.Namespace,
+			}, williamnuv1alpha1.PullRequestSpec{
 				ReviewAppRef: reviewApp.Name,
 				ImageName:    webhook.Image,
-			}); err != nil {
+				// TODO set events and statuses
+			})
+			if err != nil {
 				log.Error(err, "Error creating pull request")
 				http.Error(w, "Error creating pull request", http.StatusInternalServerError)
 				return
 			}
+
+			// deploymentUrl := utils.GetDeploymentHostname(&reviewApp, pr, "deployment")
+
+			http.Error(w, "Pull request created", http.StatusCreated)
+			return
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
