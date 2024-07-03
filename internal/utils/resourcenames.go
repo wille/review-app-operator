@@ -6,6 +6,14 @@ import (
 	. "github.com/wille/rac/api/v1alpha1"
 )
 
+func GetDeploymentHostname(reviewApp *ReviewApp, pr *PullRequest, deploymentName string) string {
+	return GetResourceName(
+		pr.Name,
+		deploymentName,
+	) + reviewApp.Spec.HostnameSuffix
+
+}
+
 func GetResourceName(name ...string) string {
 	return strings.Join(name, "-")
 	/*
