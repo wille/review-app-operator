@@ -1,6 +1,8 @@
-LABEL org.opencontainers.image.source=https://github.com/octocat/my-repo
 # Build the manager binary
 FROM golang:1.22 AS builder
+
+LABEL org.opencontainers.image.source=https://github.com/wille/review-app-operator
+
 ARG TARGETOS
 ARG TARGETARCH
 
