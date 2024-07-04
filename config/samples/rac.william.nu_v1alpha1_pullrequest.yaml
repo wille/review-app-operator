@@ -6,3 +6,4 @@ metadata:
   name: pullrequest-sample
 spec:
   reviewAppRef: reviewapp-sample
+  branchName: branchName

@@ -76,12 +76,14 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 
 	time.Sleep(5 * time.Second)
 
+	sharedName := utils.GetChildResourceName(reviewApp, &pr)
+
 	attempts := 0
 	for {
 		bothDone := true
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			deploymentName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
+			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
 			var deployment = appsv1.Deployment{}
 			if err := c.Get(context.TODO(), types.NamespacedName{

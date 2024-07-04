@@ -30,6 +30,8 @@ type PullRequestSpec struct {
 
 	ImageName string `json:"imageName,omitempty"`
 
+	BranchName string `json:"branchName,omitempty"`
+
 	// The parent ReviewApp
 	ReviewAppRef string `json:"reviewAppRef,omitempty"`
 }

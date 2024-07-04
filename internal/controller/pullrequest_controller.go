@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -109,6 +110,9 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
+	// Shared name for all child resources
+	sharedName := utils.GetChildResourceName(&reviewApp, pr)
+
 	// Deployments owned by this PullRequest
 	var list appsv1.DeploymentList
 	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{pullRequestOwnerKey: req.Name}); err != nil {
@@ -120,8 +124,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		found := false
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			name := utils.GetResourceName(pr.Name, deploymentSpec.Name)
-			if runningDeployment.ObjectMeta.Name == name {
+			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
+			if runningDeployment.ObjectMeta.Name == deploymentName {
 				found = true
 				break
 			}
@@ -137,7 +141,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Loop all desired deployments in the ReviewApp spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		deploymentName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
+		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
 		desiredLabels := getResourceLabels(&reviewApp, deploymentName, true)
 
@@ -221,6 +225,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			},
 		}
 
+		// TODO Service name according to RFC 1035
 		desiredSvc := &corev1.Service{
 			ObjectMeta: objectMeta,
 			Spec: corev1.ServiceSpec{
@@ -268,9 +273,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	pathType := networkingv1.PathTypePrefix
 	desiredIngress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels:    getResourceLabels(&reviewApp, utils.GetResourceNameFrom(&reviewApp, pr), true),
-			Name:      utils.GetResourceNameFrom(&reviewApp, pr),
-			Namespace: reviewApp.Namespace,
+			Labels:      getResourceLabels(&reviewApp, sharedName, true),
+			Name:        sharedName,
+			Namespace:   reviewApp.Namespace,
+			Annotations: reviewApp.Spec.IngressConfig.Annotations,
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: reviewApp.Spec.IngressConfig.IngressClassName,
@@ -283,45 +289,58 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
 		desiredIngress.Spec.TLS = append(desiredIngress.Spec.TLS, networkingv1.IngressTLS{
 			SecretName: reviewApp.Spec.IngressConfig.TLSSecretName,
-			Hosts:      []string{},
+			Hosts:      []string{"*." + reviewApp.Spec.Domain},
 		})
 	}
 
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		host := utils.GetDeploymentHostname(&reviewApp, pr, deploymentSpec.Name)
-		serviceName := utils.GetResourceName(pr.Name, deploymentSpec.Name)
+		templates := deploymentSpec.HostTemplates
 
-		rule := networkingv1.IngressRule{
-			Host: host,
-			IngressRuleValue: networkingv1.IngressRuleValue{
-				HTTP: &networkingv1.HTTPIngressRuleValue{
-					Paths: []networkingv1.HTTPIngressPath{
-						{
-							Path:     "/",
-							PathType: &pathType,
-							Backend: networkingv1.IngressBackend{
-								Service: &networkingv1.IngressServiceBackend{
-									Name: serviceName,
-									Port: networkingv1.ServiceBackendPort{
-										Number: deploymentSpec.TargetContainerPort,
+		// HostTemplates has a default set in the template, so it should never be empty
+		if len(templates) == 0 {
+			return ctrl.Result{}, errors.New("hostTemplates must be set")
+		}
+
+		hosts, err := utils.GetHostnamesFromTemplate(templates, deploymentSpec.Name, *pr, reviewApp)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		for _, host := range hosts {
+			serviceName := sharedName
+
+			rule := networkingv1.IngressRule{
+				Host: host,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{
+							{
+								Path:     "/",
+								PathType: &pathType,
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: serviceName,
+										Port: networkingv1.ServiceBackendPort{
+											Number: deploymentSpec.TargetContainerPort,
+										},
 									},
 								},
 							},
 						},
 					},
 				},
-			},
-		}
+			}
 
-		desiredIngress.Spec.Rules = append(desiredIngress.Spec.Rules, rule)
+			desiredIngress.Spec.Rules = append(desiredIngress.Spec.Rules, rule)
 
-		if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
-			desiredIngress.Spec.TLS[0].Hosts = append(desiredIngress.Spec.TLS[0].Hosts, host)
+			// if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
+			// 	desiredIngress.Spec.TLS[0].Hosts = append(desiredIngress.Spec.TLS[0].Hosts, host)
+			// }
 		}
 	}
 
 	var activeIngress networkingv1.Ingress
-	if err := r.Get(ctx, types.NamespacedName{Name: utils.GetResourceNameFrom(&reviewApp, pr), Namespace: reviewApp.Namespace}, &activeIngress); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: sharedName, Namespace: reviewApp.Namespace}, &activeIngress); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -338,7 +357,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	} else {
 		// Ingress labels or spec differs from desired spec
 		if !equality.Semantic.DeepDerivative(desiredIngress.Spec, activeIngress.Spec) ||
-			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Labels, activeIngress.ObjectMeta.Labels) {
+			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Labels, activeIngress.ObjectMeta.Labels) ||
+			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Annotations, activeIngress.ObjectMeta.Annotations) {
 			patch := client.MergeFrom(activeIngress.DeepCopy())
 
 			activeIngress.ObjectMeta.Labels = desiredIngress.ObjectMeta.Labels

@@ -1,3 +1,4 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -30,6 +31,10 @@ spec:
               deployments:
                 items:
                   properties:
+                    hostTemplates:
+                      items:
+                        type: string
+                      type: array
                     name:
                       type: string
                     spec:
@@ -3593,25 +3598,24 @@ spec:
                       type: object
                     targetContainerName:
                       type: string
-                    targetPort:
+                    targetContainerPort:
                       format: int32
                       type: integer
                   required:
                   - name
                   - spec
                   - targetContainerName
-                  - targetPort
+                  - targetContainerPort
                   type: object
                 type: array
-              github:
-                properties:
-                  githubToken:
-                    type: string
-                required:
-                - githubToken
-                type: object
+              domain:
+                type: string
               ingressConfig:
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
                   defaultBackend:
                     properties:
                       resource:
@@ -3643,17 +3647,17 @@ spec:
                         - name
                         type: object
                     type: object
-                  hostnameSuffix:
-                    type: string
                   ingressClassName:
                     type: string
                   tlsSecretName:
                     type: string
                 required:
-                - hostnameSuffix
+                - annotations
+                - tlsSecretName
                 type: object
             required:
             - deployments
+            - domain
             type: object
           status:
             properties:

@@ -5,14 +5,14 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-  {{ toYaml .Values.webhookIngress.annotations | nindent 4 }}
+  {{ toYaml .Values.webhook.ingress.annotations | nindent 4 }}
 spec:
   tls:
   - hosts:
-    - '{{ .Values.webhookIngress.host }}'
+    - '{{ .Values.webhook.ingress.host }}'
     secretName: {{ include "chart.fullname" . }}-webhook-server-secret
   rules:
-  - host: '{{ required "webhookIngress.host must be set" .Values.webhookIngress.host }}'
+  - host: '{{ required "webhook.ingress.host must be set" .Values.webhook.ingress.host }}'
     http:
       paths:
       - backend:

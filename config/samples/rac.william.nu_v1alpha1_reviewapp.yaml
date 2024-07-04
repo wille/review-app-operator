@@ -5,10 +5,11 @@ metadata:
   labels:
     mylabel: mylabel
 spec:
-  github:
-    githubToken: "githubToken"
+  domain: review.example.com
   ingressConfig:
-    hostnameSuffix: ".pr.bitrefill.com"
+    tlsSecretName: reviewapp-sample-tls
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
     # ingressClassName:
     # defaultBackend:
   deployments:
@@ -16,7 +17,8 @@ spec:
     - name: prod
       targetContainerName: nginx
       targetContainerPort: 80
-      targetPort: 80
+      hostTemplates:
+        - "template-{{branchName}}"
       spec:
         # It's recommended to run your staging containers on a separate node pool
         # nodeSelector:
@@ -28,12 +30,13 @@ spec:
               - containerPort: 80
     - name: staging
       targetContainerName: nginx
-      targetContainerPort: 8080
-      targetPort: 8080
+      targetContainerPort: 80
       spec:
         containers:
           - name: nginx
             image: nginx:1.20
             ports:
-              - containerPort: 8080
+              - containerPort: 80
+          - name: redis
+            image: redis:6
     # A staging environment pointing to your staging database

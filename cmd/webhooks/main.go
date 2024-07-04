@@ -113,9 +113,7 @@ func Run() {
 			return
 		}
 
-		branchName := webhook.BranchName
-
-		log := log.WithValues("reviewApp", webhook.ReviewAppName, "pullRequest", branchName)
+		log := log.WithValues("reviewApp", webhook.ReviewAppName, "pullRequest", webhook.BranchName)
 
 		williamnuv1alpha1.AddToScheme(scheme.Scheme)
 		c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
@@ -136,7 +134,7 @@ func Run() {
 			return
 		}
 
-		pullRequestResourceName := utils.GetResourceName(reviewApp.Name, branchName)
+		pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
 
 		switch r.Method {
 		case http.MethodDelete:
@@ -166,6 +164,7 @@ func Run() {
 			}, williamnuv1alpha1.PullRequestSpec{
 				ReviewAppRef: reviewApp.Name,
 				ImageName:    webhook.Image,
+				BranchName:   webhook.BranchName,
 				// TODO set events and statuses
 			})
 			if err != nil {

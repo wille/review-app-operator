@@ -1,6 +1,8 @@
-webhookIngress:
-  annotations: {}
-  host: ""
+webhook:
+  secret: ""
+  ingress:
+    annotations: {}
+    host: ""
 controllerManager:
   manager:
     args:
@@ -11,7 +13,7 @@ controllerManager:
       capabilities:
         drop:
           - ALL
-    image: ghcr.io/wille/review-app-operator
+    image: willeam/review-app-operator
     resources:
       limits:
         cpu: 500m

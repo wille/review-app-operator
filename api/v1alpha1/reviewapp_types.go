@@ -22,37 +22,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type GithubConfig struct {
-	GithubToken string `json:"githubToken"`
-}
-
 type Deployments struct {
-	Name                string         `json:"name"`
-	TargetContainerName string         `json:"targetContainerName"`
-	TargetContainerPort int32          `json:"targetContainerPort"`
-	Spec                corev1.PodSpec `json:"spec"`
+	Name                string `json:"name"`
+	TargetContainerName string `json:"targetContainerName"`
+	TargetContainerPort int32  `json:"targetContainerPort"`
+
+	// +kubebuilder:default:={"{{reviewAppName}}-{{branchName}}"}
+	// +optional
+	HostTemplates []string       `json:"hostTemplates"`
+	Spec          corev1.PodSpec `json:"spec"`
 }
 
 type IngressConfig struct {
-	HostnameSuffix string `json:"hostnameSuffix"`
+	TLSSecretName string `json:"tlsSecretName"`
+
+	// Annotations for the Ingress like configuring cert-manager
+	// +optional
+	Annotations map[string]string `json:"annotations"`
 
 	// +optional
 	IngressClassName *string `json:"ingressClassName,omitempty"`
 
 	// +optional
 	DefaultBackend *networkingv1.IngressBackend `json:"defaultBackend,omitempty"`
-
-	// +optional
-	TLSSecretName string `json:"tlsSecretName"`
 }
 
 // ReviewAppSpec defines the desired state of ReviewApp
 type ReviewAppSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// +kubebuilder:validation:Optional
-	Github GithubConfig `json:"github"`
+	// TODO Validating webhook with IsDNS1123Subdomain
+	Domain string `json:"domain"`
 
 	Deployments []Deployments `json:"deployments"`
 

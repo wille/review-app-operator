@@ -31,6 +31,12 @@ spec:
               deployments:
                 items:
                   properties:
+                    hostTemplates:
+                      default:
+                      - '{{reviewAppName}}-{{branchName}}'
+                      items:
+                        type: string
+                      type: array
                     name:
                       type: string
                     spec:
@@ -3604,15 +3610,14 @@ spec:
                   - targetContainerPort
                   type: object
                 type: array
-              github:
-                properties:
-                  githubToken:
-                    type: string
-                required:
-                - githubToken
-                type: object
+              domain:
+                type: string
               ingressConfig:
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
                   defaultBackend:
                     properties:
                       resource:
@@ -3644,17 +3649,16 @@ spec:
                         - name
                         type: object
                     type: object
-                  hostnameSuffix:
-                    type: string
                   ingressClassName:
                     type: string
                   tlsSecretName:
                     type: string
                 required:
-                - hostnameSuffix
+                - tlsSecretName
                 type: object
             required:
             - deployments
+            - domain
             type: object
           status:
             properties:
