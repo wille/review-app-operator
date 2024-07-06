@@ -6,8 +6,10 @@ metadata:
     mylabel: mylabel
 spec:
   domain: review.example.com
+  # One ingress per review app will be created
   ingressConfig:
     tlsSecretName: reviewapp-sample-tls
+    # TODO tlsHosts to make things super clear
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
     # ingressClassName:
@@ -19,24 +21,31 @@ spec:
       targetContainerPort: 80
       hostTemplates:
         - "template-{{branchName}}"
-      spec:
-        # It's recommended to run your staging containers on a separate node pool
-        # nodeSelector:
-        #   node-role.kubernetes.io/staging: "true"
-        containers:
-          - name: nginx
-            image: nginx:1.14.2
-            ports:
-              - containerPort: 80
+      template:
+        spec:
+          # It's recommended to run your staging containers on a separate node pool
+          # nodeSelector:
+          #   node-role.kubernetes.io/staging: "true"
+          containers:
+            - name: nginx
+              image: nginx:1.14.2
+              ports:
+                - containerPort: 80
     - name: staging
       targetContainerName: nginx
       targetContainerPort: 80
-      spec:
-        containers:
-          - name: nginx
-            image: nginx:1.20
-            ports:
-              - containerPort: 80
-          - name: redis
-            image: redis:6
+      template:
+        spec:
+          containers:
+            - name: nginx
+              image: nginx:1.20
+              ports:
+                - containerPort: 80
+            - name: redis
+              image: redis:6
+        metadata:
+          labels:
+            pod-label: pod-label
+          annotations:
+            pod-annotation: pod-annotation
     # A staging environment pointing to your staging database

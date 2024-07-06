@@ -29,8 +29,10 @@ type Deployments struct {
 
 	// +kubebuilder:default:={"{{reviewAppName}}-{{branchName}}"}
 	// +optional
-	HostTemplates []string       `json:"hostTemplates"`
-	Spec          corev1.PodSpec `json:"spec"`
+	HostTemplates []string `json:"hostTemplates"`
+
+	// generateEmbeddedObjectMeta must be set for this to work
+	Template corev1.PodTemplateSpec `json:"template"`
 }
 
 type IngressConfig struct {

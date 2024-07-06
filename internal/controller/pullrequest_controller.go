@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"maps"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -125,7 +126,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
 			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
-			if runningDeployment.ObjectMeta.Name == deploymentName {
+			selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, false)
+
+			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
+			if runningDeployment.ObjectMeta.Name == deploymentName &&
+				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.ObjectMeta.Labels) {
 				found = true
 				break
 			}
@@ -157,6 +162,18 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		replicas := int32(1)
 
+		// Merge pod template labels and annotations with the ReviewApp labels and annotations
+		podTemplate := deploymentSpec.Template.DeepCopy()
+		if podTemplate.ObjectMeta.Labels == nil {
+			podTemplate.ObjectMeta.Labels = make(map[string]string)
+		}
+		maps.Copy(podTemplate.ObjectMeta.Labels, objectMeta.Labels)
+
+		if podTemplate.ObjectMeta.Annotations == nil {
+			podTemplate.ObjectMeta.Annotations = make(map[string]string)
+		}
+		maps.Copy(podTemplate.ObjectMeta.Annotations, objectMeta.Annotations)
+
 		desiredDeployment := &appsv1.Deployment{
 			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: appsv1.DeploymentSpec{
@@ -164,10 +181,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: *objectMeta.DeepCopy(),
-					Spec:       deploymentSpec.Spec,
-				},
+				Template: *podTemplate,
 			},
 		}
 
