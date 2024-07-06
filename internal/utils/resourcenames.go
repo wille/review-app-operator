@@ -81,5 +81,5 @@ func GetResourceName(name ...string) string {
 
 // GetChildResourceName returns a child resource name for a reviewapp and pull request
 func GetChildResourceName(reviewApp *ReviewApp, pr *PullRequest) string {
-	return GetResourceName(reviewApp.Name, pr.Name)
+	return GetResourceName(reviewApp.Name, pr.Spec.BranchName)
 }
