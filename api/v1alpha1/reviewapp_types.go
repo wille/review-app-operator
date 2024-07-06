@@ -36,7 +36,7 @@ type Deployments struct {
 }
 
 type IngressConfig struct {
-	TLSSecretName string `json:"tlsSecretName"`
+	TLS *networkingv1.IngressTLS `json:"tls,omitempty"`
 
 	// Annotations for the Ingress like configuring cert-manager
 	// +optional

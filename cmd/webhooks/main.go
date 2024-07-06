@@ -124,7 +124,7 @@ func Run() {
 		}, &reviewApp); err != nil {
 			// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
 			if apierrors.IsNotFound(err) {
-				log.Error(err, "Review app not found", "name", webhook.ReviewAppName)
+				log.Error(nil, "Review app not found", "name", webhook.ReviewAppName)
 				http.Error(w, "Review app not found", http.StatusNotFound)
 				return
 			}
@@ -138,21 +138,24 @@ func Run() {
 
 		switch r.Method {
 		case http.MethodDelete:
-			log.Info("Delete webhook received")
+			log.Info("Delete webhook received", "name", pullRequestResourceName)
 
 			if err := reviewapp.DeletePullRequestByName(types.NamespacedName{
 				Name:      pullRequestResourceName,
 				Namespace: reviewApp.Namespace,
 			}); err != nil {
 				if apierrors.IsNotFound(err) {
+					log.Info("Pull request not found", "name", pullRequestResourceName)
 					http.Error(w, "Pull request not found", http.StatusNotFound)
 					return
 				}
 
+				log.Error(err, "Error deleting pull request", "name", pullRequestResourceName)
 				http.Error(w, "Error deleting pull request", http.StatusInternalServerError)
 				return
 			}
 
+			log.Info("Pull request deleted", "name", pullRequestResourceName)
 			http.Error(w, "Pull request deleted", http.StatusOK)
 			return
 		case http.MethodPost:
@@ -168,13 +171,14 @@ func Run() {
 				// TODO set events and statuses
 			})
 			if err != nil {
-				log.Error(err, "Error creating pull request")
+				log.Error(err, "Error creating pull request", "name", pullRequestResourceName)
 				http.Error(w, "Error creating pull request", http.StatusInternalServerError)
 				return
 			}
 
 			// deploymentUrl := utils.GetDeploymentHostname(&reviewApp, pr, "deployment")
 
+			log.Info("Pull request created", "name", pullRequestResourceName)
 			http.Error(w, "Pull request created", http.StatusCreated)
 			return
 		default:

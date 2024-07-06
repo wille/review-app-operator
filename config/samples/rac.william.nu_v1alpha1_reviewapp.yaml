@@ -8,8 +8,11 @@ spec:
   domain: review.example.com
   # One ingress per review app will be created
   ingressConfig:
-    tlsSecretName: reviewapp-sample-tls
     # TODO tlsHosts to make things super clear
+    tls:
+      hosts:
+        - "*.review.example.com"
+      secretName: reviewapp-sample-tls
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
     # ingressClassName:

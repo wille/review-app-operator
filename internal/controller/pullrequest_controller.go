@@ -93,7 +93,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Get(ctx, types.NamespacedName{Name: pr.Spec.ReviewAppRef, Namespace: req.Namespace}, &reviewApp); err != nil {
 		if apierrors.IsNotFound(err) {
 			// No ReviewApp for reviewAppRef found
-			log.Info("ReviewApp not found", "reviewAppRef", pr.Spec.ReviewAppRef)
+			log.Error(nil, "ReviewApp not found", "reviewAppRef", pr.Spec.ReviewAppRef)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -126,7 +126,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
 			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
-			selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, false)
+			selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
 
 			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
 			if runningDeployment.ObjectMeta.Name == deploymentName &&
@@ -148,10 +148,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
-		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, true)
+		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, true)
 
 		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
-		selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, false)
+		selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
 
 		objectMeta := metav1.ObjectMeta{
 			Name:        deploymentName,
@@ -299,11 +299,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		},
 	}
 
-	if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
-		desiredIngress.Spec.TLS = append(desiredIngress.Spec.TLS, networkingv1.IngressTLS{
-			SecretName: reviewApp.Spec.IngressConfig.TLSSecretName,
-			Hosts:      []string{"*." + reviewApp.Spec.Domain},
-		})
+	if reviewApp.Spec.IngressConfig.TLS != nil {
+		desiredIngress.Spec.TLS = []networkingv1.IngressTLS{*reviewApp.Spec.IngressConfig.TLS}
 	}
 
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
@@ -320,7 +317,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		for _, host := range hosts {
-			serviceName := sharedName
+			serviceName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
 			rule := networkingv1.IngressRule{
 				Host: host,
@@ -418,7 +415,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 
 		// TODO check APIVERSION!
-		if owner.Kind != "Deployment" {
+		if owner.Kind != "PullRequest" {
 			return nil
 		}
 
