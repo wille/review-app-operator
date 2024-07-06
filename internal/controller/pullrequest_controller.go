@@ -143,14 +143,13 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
-		desiredLabels := getResourceLabels(&reviewApp, deploymentName, true)
+		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, true)
 
 		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
-		selectorLabels := getResourceLabels(&reviewApp, deploymentName, false)
+		selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentName, false)
 
 		objectMeta := metav1.ObjectMeta{
-			Name: deploymentName,
-
+			Name:        deploymentName,
 			Labels:      desiredLabels,
 			Annotations: reviewApp.Annotations,
 			Namespace:   reviewApp.Namespace,
@@ -273,7 +272,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	pathType := networkingv1.PathTypePrefix
 	desiredIngress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels:      getResourceLabels(&reviewApp, sharedName, true),
+			Labels:      utils.GetResourceLabels(&reviewApp, *pr, "", true),
 			Name:        sharedName,
 			Namespace:   reviewApp.Namespace,
 			Annotations: reviewApp.Spec.IngressConfig.Annotations,

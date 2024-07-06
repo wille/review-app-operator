@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"maps"
 
 	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
@@ -140,24 +139,6 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&racwilliamnuv1alpha1.ReviewApp{}).
 		Owns(&racwilliamnuv1alpha1.PullRequest{}).
 		Complete(r)
-}
-
-// getResourceLabels returns the labels for all ReviewApp child resources
-func getResourceLabels(reviewApp *racwilliamnuv1alpha1.ReviewApp, instance string, includeUserLabels bool) map[string]string {
-	labels := map[string]string{
-		"app.kubernetes.io/name":       reviewApp.Name,
-		"app.kubernetes.io/instance":   instance,
-		"app.kubernetes.io/version":    "Target",
-		"app.kubernetes.io/component":  "review-app",
-		"app.kubernetes.io/part-of":    reviewApp.Name,
-		"app.kubernetes.io/managed-by": "review-app-controller",
-	}
-
-	if includeUserLabels {
-		maps.Copy(labels, reviewApp.ObjectMeta.Labels)
-	}
-
-	return labels
 }
 
 func (r *ReviewAppReconciler) deleteExternalResources(ctx context.Context, cronJob *racwilliamnuv1alpha1.ReviewApp) error {
