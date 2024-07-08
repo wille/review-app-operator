@@ -35,8 +35,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	"github.com/wille/rac/cmd/proxy"
 	"github.com/wille/rac/cmd/webhooks"
 	"github.com/wille/rac/internal/controller"
+	"github.com/wille/rac/internal/controller/forwarder"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -149,12 +151,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	go webhooks.Run()
+	go webhooks.Start()
+	go proxy.Start(mgr.GetClient())
+
+	fw := forwarder.Downscaler{Client: mgr.GetClient(), TimeoutSeconds: 60 * 10}
+	go fw.StartWatching()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-
 }

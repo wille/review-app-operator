@@ -18,7 +18,6 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -35,29 +34,12 @@ type Deployments struct {
 	Template corev1.PodTemplateSpec `json:"template"`
 }
 
-type IngressConfig struct {
-	TLS *networkingv1.IngressTLS `json:"tls,omitempty"`
-
-	// Annotations for the Ingress like configuring cert-manager
-	// +optional
-	Annotations map[string]string `json:"annotations"`
-
-	// +optional
-	IngressClassName *string `json:"ingressClassName,omitempty"`
-
-	// +optional
-	DefaultBackend *networkingv1.IngressBackend `json:"defaultBackend,omitempty"`
-}
-
 // ReviewAppSpec defines the desired state of ReviewApp
 type ReviewAppSpec struct {
 	// TODO Validating webhook with IsDNS1123Subdomain
 	Domain string `json:"domain"`
 
 	Deployments []Deployments `json:"deployments"`
-
-	// +optional
-	IngressConfig `json:"ingressConfig"`
 }
 
 // ReviewAppStatus defines the observed state of ReviewApp

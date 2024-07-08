@@ -18,12 +18,11 @@ package controller
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"maps"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,7 +55,7 @@ type PullRequestReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests/finalizers,verbs=update
 
@@ -69,17 +68,9 @@ type PullRequestReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses/status,verbs=get
 
+// Get, SetControllerReference
 // +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the PullRequest object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.2/pkg/reconcile
 func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -129,6 +120,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
 
 			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
+			// This should not happen as the selector labels are derived from the PullRequest and ReviewApp but guard anyways against having stale deployments
 			if runningDeployment.ObjectMeta.Name == deploymentName &&
 				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.ObjectMeta.Labels) {
 				found = true
@@ -137,7 +129,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		if !found {
-			log.Info("Deleting deployment not in spec", "name", runningDeployment.ObjectMeta.Name)
+			log.Info("Deleting deployment", "name", runningDeployment.Name)
 			if err := r.Delete(ctx, &runningDeployment); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -148,9 +140,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
+		// Desired labels for all subresources, including all labels set on the ReviewApp
 		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, true)
 
 		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
+		// so selectorLabels does not include user labels
 		selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
 
 		objectMeta := metav1.ObjectMeta{
@@ -159,8 +153,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Annotations: reviewApp.Annotations,
 			Namespace:   reviewApp.Namespace,
 		}
-
-		replicas := int32(1)
 
 		// Merge pod template labels and annotations with the ReviewApp labels and annotations
 		podTemplate := deploymentSpec.Template.DeepCopy()
@@ -177,7 +169,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		desiredDeployment := &appsv1.Deployment{
 			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: appsv1.DeploymentSpec{
-				Replicas: &replicas,
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
@@ -214,12 +205,12 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		} else {
 
 			// Deployment labels or spec differs from desired spec
-			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec, runningDeployment.Spec) ||
+			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec.Template, runningDeployment.Spec.Template) ||
 				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) {
 				patch := client.MergeFrom(runningDeployment.DeepCopy())
 
 				runningDeployment.ObjectMeta.Labels = desiredLabels
-				runningDeployment.Spec = desiredDeployment.Spec
+				runningDeployment.Spec.Template = desiredDeployment.Spec.Template
 
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 					return ctrl.Result{}, err
@@ -240,13 +231,16 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		// TODO Service name according to RFC 1035
 		desiredSvc := &corev1.Service{
-			ObjectMeta: objectMeta,
+			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: corev1.ServiceSpec{
 				Selector: selectorLabels,
 				Type:     corev1.ServiceTypeClusterIP,
 				Ports:    ports,
 			},
 		}
+		hosts, _ := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, reviewApp)
+		enc, _ := json.Marshal(hosts)
+		desiredSvc.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
 
 		// If a .spec.deployment.name changes, the old service will not be cleaned up
 		var activeSvc corev1.Service
@@ -268,11 +262,13 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		} else {
 			// Service labels or spec differs from desired spec
 			if !equality.Semantic.DeepDerivative(desiredSvc.Spec, activeSvc.Spec) ||
-				!equality.Semantic.DeepEqual(desiredLabels, activeSvc.ObjectMeta.Labels) {
+				!equality.Semantic.DeepEqual(desiredSvc.ObjectMeta.Labels, activeSvc.ObjectMeta.Labels) ||
+				!equality.Semantic.DeepEqual(desiredSvc.ObjectMeta.Annotations, activeSvc.ObjectMeta.Annotations) {
 				patch := client.MergeFrom(activeSvc.DeepCopy())
 
-				activeSvc.ObjectMeta.Labels = desiredLabels
+				activeSvc.ObjectMeta.Labels = desiredSvc.ObjectMeta.Labels
 				activeSvc.Spec = desiredSvc.Spec
+				activeSvc.ObjectMeta.Annotations = desiredSvc.ObjectMeta.Annotations
 
 				if err := r.Patch(ctx, &activeSvc, patch); err != nil {
 					return ctrl.Result{}, err
@@ -280,105 +276,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 				log.Info("Service updated", "serviceName", deploymentName)
 			}
-		}
-	}
-
-	pathType := networkingv1.PathTypePrefix
-	desiredIngress := &networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels:      utils.GetResourceLabels(&reviewApp, *pr, "", true),
-			Name:        sharedName,
-			Namespace:   reviewApp.Namespace,
-			Annotations: reviewApp.Spec.IngressConfig.Annotations,
-		},
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: reviewApp.Spec.IngressConfig.IngressClassName,
-			DefaultBackend:   reviewApp.Spec.IngressConfig.DefaultBackend,
-			Rules:            []networkingv1.IngressRule{},
-			TLS:              []networkingv1.IngressTLS{},
-		},
-	}
-
-	if reviewApp.Spec.IngressConfig.TLS != nil {
-		desiredIngress.Spec.TLS = []networkingv1.IngressTLS{*reviewApp.Spec.IngressConfig.TLS}
-	}
-
-	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		templates := deploymentSpec.HostTemplates
-
-		// HostTemplates has a default set in the template, so it should never be empty
-		if len(templates) == 0 {
-			return ctrl.Result{}, errors.New("hostTemplates must be set")
-		}
-
-		hosts, err := utils.GetHostnamesFromTemplate(templates, deploymentSpec.Name, *pr, reviewApp)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		for _, host := range hosts {
-			serviceName := utils.GetResourceName(sharedName, deploymentSpec.Name)
-
-			rule := networkingv1.IngressRule{
-				Host: host,
-				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{
-							{
-								Path:     "/",
-								PathType: &pathType,
-								Backend: networkingv1.IngressBackend{
-									Service: &networkingv1.IngressServiceBackend{
-										Name: serviceName,
-										Port: networkingv1.ServiceBackendPort{
-											Number: deploymentSpec.TargetContainerPort,
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			}
-
-			desiredIngress.Spec.Rules = append(desiredIngress.Spec.Rules, rule)
-
-			// if reviewApp.Spec.IngressConfig.TLSSecretName != "" {
-			// 	desiredIngress.Spec.TLS[0].Hosts = append(desiredIngress.Spec.TLS[0].Hosts, host)
-			// }
-		}
-	}
-
-	var activeIngress networkingv1.Ingress
-	if err := r.Get(ctx, types.NamespacedName{Name: sharedName, Namespace: reviewApp.Namespace}, &activeIngress); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-
-		if err := ctrl.SetControllerReference(pr, desiredIngress, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		if err := r.Create(ctx, desiredIngress); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		log.Info("Ingress created", "ingressName", desiredIngress.ObjectMeta.Name)
-	} else {
-		// Ingress labels or spec differs from desired spec
-		if !equality.Semantic.DeepDerivative(desiredIngress.Spec, activeIngress.Spec) ||
-			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Labels, activeIngress.ObjectMeta.Labels) ||
-			!equality.Semantic.DeepEqual(desiredIngress.ObjectMeta.Annotations, activeIngress.ObjectMeta.Annotations) {
-			patch := client.MergeFrom(activeIngress.DeepCopy())
-
-			activeIngress.ObjectMeta.Labels = desiredIngress.ObjectMeta.Labels
-			activeIngress.Spec = desiredIngress.Spec
-
-			if err := r.Patch(ctx, &activeIngress, patch); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Ingress updated", "ingressName", activeIngress.ObjectMeta.Name)
 		}
 	}
 
@@ -436,11 +333,27 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index services by the hosts annotation to query them in the proxy
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Service{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
+		svc := rawObj.(*corev1.Service)
+
+		var hosts []string
+
+		if enc, ok := svc.Annotations[utils.HostAnnotation]; ok {
+			// TODO error
+			json.Unmarshal([]byte(enc), &hosts)
+			return hosts
+		}
+
+		return []string{}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&racwilliamnuv1alpha1.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&networkingv1.Ingress{}).
 		// Watch for changes to ReviewApp resources
 		Watches(
 			&racwilliamnuv1alpha1.ReviewApp{},

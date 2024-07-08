@@ -4,7 +4,22 @@ import (
 	"maps"
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// MatchingLabels selector to select resources managed by the review-app-controller
+var MatchingLabels = client.MatchingLabels{"app.kubernetes.io/managed-by": "review-app-controller"}
+
+// LastRequestTimeAnnotation is the annotation set on deployments to signal
+// when the last request was made there so it can be downscaled
+const LastRequestTimeAnnotation = "rac/last-request"
+
+// HostAnnotation is set on services to store the hostnames they are active for
+// and is used by the indexer
+const HostAnnotation = "rac/hosts"
+
+// HostIndexFieldName is the field indexes on Services to store the hostnames they are active for
+const HostIndexFieldName = ".hosts"
 
 // GetResourceLabels returns the labels for all ReviewApp child resources
 func GetResourceLabels(reviewApp *racwilliamnuv1alpha1.ReviewApp, pr racwilliamnuv1alpha1.PullRequest, deploymentName string, includeUserLabels bool) map[string]string {

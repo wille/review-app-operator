@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -24,6 +25,12 @@ import (
 )
 
 var webhookSecret = "secret"
+
+func init() {
+	if secret := os.Getenv("WEBHOOK_SECRET"); secret != "" {
+		webhookSecret = secret
+	}
+}
 
 func validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
@@ -44,21 +51,6 @@ func validateWebhook(body []byte, r *http.Request) error {
 	return nil
 }
 
-/*
-	{
-	    "event": "push",
-	    "repository": "owner/project",
-	    "commit": "a636b6f0861bbee98039bf3df66ee13d8fbc9c74",
-	    "ref": "refs/heads/master",
-	    "head": "",
-	    "workflow": "Build and deploy",
-	    "data": {
-	        "weapon": "hammer",
-	        "drink": "beer"
-	    },
-	    "requestID": "74b1912d19cfe780f1fada4b525777fd"
-	}
-*/
 type Webhook struct {
 	// ReviewAppName is the name of the Review App to update
 	ReviewAppName string `json:"reviewAppName"`
@@ -87,105 +79,107 @@ type Webhook struct {
 	Sender string `json:"sender"`
 }
 
-func Run() {
-	handler := http.NewServeMux()
-
+func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	log := log.Log.WithName("webhooks")
 
-	handler.Handle("/v1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		body, err := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
 
-		if err != nil {
-			http.Error(w, "Error reading body", http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	if err != nil {
+		http.Error(w, "Error reading body", http.StatusInternalServerError)
+		return
+	}
+
+	if err := validateWebhook(body, r); err != nil {
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	var webhook Webhook
+	if err := json.Unmarshal(body, &webhook); err != nil {
+		log.Error(err, "Error unmarshalling body")
+		http.Error(w, "Error unmarshalling body", http.StatusBadRequest)
+		return
+	}
+
+	williamnuv1alpha1.AddToScheme(scheme.Scheme)
+	c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
+	reviewApp := williamnuv1alpha1.ReviewApp{}
+	if err := c.Get(context.TODO(), types.NamespacedName{
+		Name:      webhook.ReviewAppName,
+		Namespace: webhook.ReviewAppNamespace,
+	}, &reviewApp); err != nil {
+		// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
+		if apierrors.IsNotFound(err) {
+			log.Error(nil, "Review app not found", "name", webhook.ReviewAppName)
+			http.Error(w, "Review app not found", http.StatusNotFound)
 			return
 		}
 
-		if err := validateWebhook(body, r); err != nil {
-			http.Error(w, "Invalid signature", http.StatusUnauthorized)
-			return
-		}
+		log.Error(err, "Error getting review app")
+		http.Error(w, "Error getting review app", http.StatusInternalServerError)
+		return
+	}
 
-		var webhook Webhook
-		if err := json.Unmarshal(body, &webhook); err != nil {
-			log.Error(err, "Error unmarshalling body")
-			http.Error(w, "Error unmarshalling body", http.StatusBadRequest)
-			return
-		}
+	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
 
-		log := log.WithValues("reviewApp", webhook.ReviewAppName, "pullRequest", webhook.BranchName)
+	switch r.Method {
+	case http.MethodDelete:
+		log.Info("Delete webhook received", "name", pullRequestResourceName)
 
-		williamnuv1alpha1.AddToScheme(scheme.Scheme)
-		c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
-		reviewApp := williamnuv1alpha1.ReviewApp{}
-		if err := c.Get(context.TODO(), types.NamespacedName{
-			Name:      webhook.ReviewAppName,
-			Namespace: webhook.ReviewAppNamespace,
-		}, &reviewApp); err != nil {
-			// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
+		if err := reviewapp.DeletePullRequestByName(types.NamespacedName{
+			Name:      pullRequestResourceName,
+			Namespace: reviewApp.Namespace,
+		}); err != nil {
 			if apierrors.IsNotFound(err) {
-				log.Error(nil, "Review app not found", "name", webhook.ReviewAppName)
-				http.Error(w, "Review app not found", http.StatusNotFound)
+				log.Info("Pull request not found", "name", pullRequestResourceName)
+				http.Error(w, "Pull request not found", http.StatusNotFound)
 				return
 			}
 
-			log.Error(err, "Error getting review app")
-			http.Error(w, "Error getting review app", http.StatusInternalServerError)
+			log.Error(err, "Error deleting pull request", "name", pullRequestResourceName)
+			http.Error(w, "Error deleting pull request", http.StatusInternalServerError)
 			return
 		}
 
-		pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
+		log.Info("Pull request deleted", "name", pullRequestResourceName)
+		http.Error(w, "Pull request deleted", http.StatusOK)
+		return
+	case http.MethodPost:
+		log.Info("Create webhook received", "webhook", webhook)
 
-		switch r.Method {
-		case http.MethodDelete:
-			log.Info("Delete webhook received", "name", pullRequestResourceName)
-
-			if err := reviewapp.DeletePullRequestByName(types.NamespacedName{
-				Name:      pullRequestResourceName,
-				Namespace: reviewApp.Namespace,
-			}); err != nil {
-				if apierrors.IsNotFound(err) {
-					log.Info("Pull request not found", "name", pullRequestResourceName)
-					http.Error(w, "Pull request not found", http.StatusNotFound)
-					return
-				}
-
-				log.Error(err, "Error deleting pull request", "name", pullRequestResourceName)
-				http.Error(w, "Error deleting pull request", http.StatusInternalServerError)
-				return
-			}
-
-			log.Info("Pull request deleted", "name", pullRequestResourceName)
-			http.Error(w, "Pull request deleted", http.StatusOK)
-			return
-		case http.MethodPost:
-			log.Info("Create webhook received", "webhook", webhook)
-
-			_, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
-				Name:      pullRequestResourceName,
-				Namespace: reviewApp.Namespace,
-			}, williamnuv1alpha1.PullRequestSpec{
-				ReviewAppRef: reviewApp.Name,
-				ImageName:    webhook.Image,
-				BranchName:   webhook.BranchName,
-				// TODO set events and statuses
-			})
-			if err != nil {
-				log.Error(err, "Error creating pull request", "name", pullRequestResourceName)
-				http.Error(w, "Error creating pull request", http.StatusInternalServerError)
-				return
-			}
-
-			// deploymentUrl := utils.GetDeploymentHostname(&reviewApp, pr, "deployment")
-
-			log.Info("Pull request created", "name", pullRequestResourceName)
-			http.Error(w, "Pull request created", http.StatusCreated)
-			return
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		_, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
+			Name:      pullRequestResourceName,
+			Namespace: reviewApp.Namespace,
+		}, williamnuv1alpha1.PullRequestSpec{
+			ReviewAppRef: reviewApp.Name,
+			ImageName:    webhook.Image,
+			BranchName:   webhook.BranchName,
+			// TODO set events and statuses
+		}, w)
+		if err != nil {
+			log.Error(err, "Error creating pull request", "name", pullRequestResourceName)
+			http.Error(w, "Error creating pull request", http.StatusInternalServerError)
 			return
 		}
-	}))
+
+		// deploymentUrl := utils.GetDeploymentHostname(&reviewApp, pr, "deployment")
+
+		w.Write([]byte("Review App URL: " + "https://example.com"))
+		return
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+}
+
+func Start() {
+	handler := http.NewServeMux()
+
+	handler.Handle("/v1", http.HandlerFunc(webhookHandler))
 
 	http.ListenAndServe(":8080", handler)
 }

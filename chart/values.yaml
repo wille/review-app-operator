@@ -3,6 +3,11 @@ webhook:
   ingress:
     annotations: {}
     host: ""
+forwarder:
+  ingress:
+    annotations: {}
+    host: ""
+scaleDownAfter: 6s
 controllerManager:
   manager:
     args:

@@ -6,17 +6,6 @@ metadata:
     mylabel: mylabel
 spec:
   domain: review.example.com
-  # One ingress per review app will be created
-  ingressConfig:
-    # TODO tlsHosts to make things super clear
-    tls:
-      hosts:
-        - "*.review.example.com"
-      secretName: reviewapp-sample-tls
-    annotations:
-      cert-manager.io/cluster-issuer: letsencrypt
-    # ingressClassName:
-    # defaultBackend:
   deployments:
     # A staging environment pointing to your read only production database
     - name: prod

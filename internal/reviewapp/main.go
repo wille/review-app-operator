@@ -3,6 +3,7 @@ package reviewapp
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -13,6 +14,7 @@ import (
 
 	"k8s.io/kubectl/pkg/polymorphichelpers"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
 	"github.com/wille/rac/internal/utils"
@@ -37,7 +39,16 @@ func DeletePullRequestByName(key types.NamespacedName) error {
 	return nil
 }
 
-func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key types.NamespacedName, spec racwilliamnuv1alpha1.PullRequestSpec) (*racwilliamnuv1alpha1.PullRequest, error) {
+func writeFlush(w http.ResponseWriter, s string) {
+	w.Write([]byte(s))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key types.NamespacedName, spec racwilliamnuv1alpha1.PullRequestSpec, w http.ResponseWriter) (*racwilliamnuv1alpha1.PullRequest, error) {
+	log := log.Log.WithName("webhooks")
+
 	c, err := utils.GetKubernetesClient()
 	if err != nil {
 		return nil, err
@@ -56,13 +67,20 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 		// Create the PullRequest if it is not found
 		if apierrors.IsNotFound(err) {
 			if err := c.Create(context.TODO(), &pr); err != nil {
-
 				return nil, err
 			}
+
+			w.WriteHeader(http.StatusCreated)
+			writeFlush(w, fmt.Sprintf("Created pull request \"%s\" for branch \"%s\"", pr.Name, pr.Spec.BranchName))
 		} else {
 			return nil, err
 		}
 	} else {
+		if !utils.IsSameImageRepo(pr.Spec.ImageName, spec.ImageName) {
+			w.WriteHeader(http.StatusForbidden)
+			return nil, fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", pr.Spec.ImageName, spec.ImageName)
+		}
+
 		patch := client.MergeFrom(pr.DeepCopy())
 		pr.Spec = spec
 
@@ -70,11 +88,10 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 		if err := c.Patch(context.TODO(), &pr, patch); err != nil {
 			return nil, err
 		}
+
+		w.WriteHeader(http.StatusAccepted)
+		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"", pr.Spec.BranchName))
 	}
-
-	fmt.Println("Updated", "spec", spec)
-
-	time.Sleep(5 * time.Second)
 
 	sharedName := utils.GetChildResourceName(reviewApp, &pr)
 
@@ -97,18 +114,21 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 
 			obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&deployment)
 			if err != nil {
-				return nil, err
+				log.Error(err, "Error converting deployment to unstructured")
+				return &pr, nil
 			}
 
 			status, done, err := statusViewer.Status(&unstructured.Unstructured{Object: obj}, 0)
 			if err != nil {
-				return nil, err
+				log.Error(err, "Error getting deployment status")
+				return &pr, nil
 			}
 			if !done {
 				bothDone = false
 			}
 
-			fmt.Println("Deployment status", status, done, err)
+			log.Info(status, "done", done)
+			writeFlush(w, status)
 		}
 
 		if bothDone {
@@ -118,7 +138,8 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 		attempts++
 
 		if attempts > 30 {
-			return nil, fmt.Errorf("Timeout reached")
+			log.Info("Timeout waiting for deployments to be ready")
+			break
 		}
 
 		time.Sleep(1 * time.Second)
