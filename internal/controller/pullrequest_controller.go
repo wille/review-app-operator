@@ -117,7 +117,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
 			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
-			selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
+			selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
 			// This should not happen as the selector labels are derived from the PullRequest and ReviewApp but guard anyways against having stale deployments
@@ -141,11 +141,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
 		// Desired labels for all subresources, including all labels set on the ReviewApp
-		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, true)
+		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
 		// so selectorLabels does not include user labels
-		selectorLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name, false)
+		selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 		objectMeta := metav1.ObjectMeta{
 			Name:        deploymentName,
