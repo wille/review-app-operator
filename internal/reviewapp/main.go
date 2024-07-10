@@ -46,7 +46,14 @@ func writeFlush(w http.ResponseWriter, s string) {
 	}
 }
 
-func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key types.NamespacedName, spec racwilliamnuv1alpha1.PullRequestSpec, w http.ResponseWriter) (*racwilliamnuv1alpha1.PullRequest, error) {
+// CreateOrUpdatePullRequest ensures that the desired pull request exists and is up to date
+// and streams the status of the deployments to the response writer
+func CreateOrUpdatePullRequest(
+	reviewApp *racwilliamnuv1alpha1.ReviewApp,
+	key types.NamespacedName,
+	spec racwilliamnuv1alpha1.PullRequestSpec,
+	w http.ResponseWriter,
+) (*racwilliamnuv1alpha1.PullRequest, error) {
 	log := log.Log.WithName("webhooks")
 
 	c, err := utils.GetKubernetesClient()
@@ -73,12 +80,15 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 			w.WriteHeader(http.StatusCreated)
 			writeFlush(w, fmt.Sprintf("Created pull request \"%s\" for branch \"%s\"", pr.Name, pr.Spec.BranchName))
 		} else {
+			log.Error(err, "Error getting pull request", "name", key.Name)
 			return nil, err
 		}
 	} else {
 		if !utils.IsSameImageRepo(pr.Spec.ImageName, spec.ImageName) {
+			err := fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", pr.Spec.ImageName, spec.ImageName)
+			log.Error(err, "The image repository is immutable", "name", key.Name)
 			w.WriteHeader(http.StatusForbidden)
-			return nil, fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", pr.Spec.ImageName, spec.ImageName)
+			return nil, err
 		}
 
 		patch := client.MergeFrom(pr.DeepCopy())
@@ -86,11 +96,12 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 
 		// Update the PullRequest if it is found
 		if err := c.Patch(context.TODO(), &pr, patch); err != nil {
+			log.Error(err, "Error updating pull request", "name", key.Name)
 			return nil, err
 		}
 
 		w.WriteHeader(http.StatusAccepted)
-		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"", pr.Spec.BranchName))
+		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", pr.Spec.BranchName))
 	}
 
 	sharedName := utils.GetChildResourceName(reviewApp, &pr)
@@ -107,6 +118,11 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 				Name:      deploymentName,
 				Namespace: key.Namespace,
 			}, &deployment); err != nil {
+				if apierrors.IsNotFound(err) {
+					writeFlush(w, fmt.Sprintf("Waiting for deployment \"%s\" to be created...\n", deploymentName))
+					break
+				}
+
 				return nil, err
 			}
 
@@ -127,7 +143,6 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 				bothDone = false
 			}
 
-			log.Info(status, "done", done)
 			writeFlush(w, status)
 		}
 
@@ -137,8 +152,11 @@ func CreateOrUpdatePullRequest(reviewApp *racwilliamnuv1alpha1.ReviewApp, key ty
 
 		attempts++
 
-		if attempts > 30 {
+		// TODO configuration option
+		//
+		if attempts > 120 {
 			log.Info("Timeout waiting for deployments to be ready")
+			http.Error(w, "Timeout waiting for deployments to be ready", http.StatusRequestTimeout)
 			break
 		}
 
