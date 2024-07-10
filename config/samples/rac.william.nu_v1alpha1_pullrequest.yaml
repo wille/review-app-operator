@@ -7,3 +7,4 @@ metadata:
 spec:
   reviewAppRef: reviewapp-sample
   branchName: branchName
+  imageName: nginx:1.20

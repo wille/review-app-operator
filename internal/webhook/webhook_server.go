@@ -17,41 +17,17 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	williamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
 	"github.com/wille/rac/internal/reviewapp"
 	"github.com/wille/rac/internal/utils"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-var webhookSecret = "secret"
+var log = ctrl.Log.WithName("webhooks")
 
-func init() {
-	if secret := os.Getenv("WEBHOOK_SECRET"); secret != "" {
-		webhookSecret = secret
-	}
-}
-
-func validateWebhook(body []byte, r *http.Request) error {
-	signature := r.Header.Get("x-hub-signature-256")
-
-	_hmac := hmac.New(sha256.New, []byte(webhookSecret))
-
-	if _, err := _hmac.Write(body); err != nil {
-		return err
-	}
-
-	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(nil))
-
-	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-		fmt.Printf("Invalid signature %s, expected=%s\n", signature, expectedSignature)
-		return errors.New("Invalid signature")
-	}
-
-	return nil
-}
-
-type Webhook struct {
+type WebhookBody struct {
 	// ReviewAppName is the name of the Review App to update
 	ReviewAppName string `json:"reviewAppName"`
 
@@ -79,9 +55,47 @@ type Webhook struct {
 	Sender string `json:"sender"`
 }
 
-func webhookHandler(w http.ResponseWriter, r *http.Request) {
-	log := log.Log.WithName("webhooks")
+type WebhookServer struct {
+	Addr string
+	client.Client
 
+	webhookSecret string
+}
+
+func (wh WebhookServer) Start(ctx context.Context) error {
+	secret := os.Getenv("WEBHOOK_SECRET")
+	if secret == "" {
+		return fmt.Errorf("WEBHOOK_SECRET is not set!")
+	}
+	wh.webhookSecret = secret
+
+	handler := http.NewServeMux()
+
+	handler.Handle("/v1", http.HandlerFunc(wh.ServeHTTP))
+
+	return http.ListenAndServe(wh.Addr, handler)
+}
+
+func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
+	signature := r.Header.Get("x-hub-signature-256")
+
+	_hmac := hmac.New(sha256.New, []byte(wh.webhookSecret))
+
+	if _, err := _hmac.Write(body); err != nil {
+		return err
+	}
+
+	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(nil))
+
+	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+		fmt.Printf("Invalid signature %s, expected=%s\n", signature, expectedSignature)
+		return errors.New("Invalid signature")
+	}
+
+	return nil
+}
+
+func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 
@@ -93,12 +107,12 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateWebhook(body, r); err != nil {
+	if err := wh.validateWebhook(body, r); err != nil {
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return
 	}
 
-	var webhook Webhook
+	var webhook WebhookBody
 	if err := json.Unmarshal(body, &webhook); err != nil {
 		log.Error(err, "Error unmarshalling body")
 		http.Error(w, "Error unmarshalling body", http.StatusBadRequest)
@@ -174,12 +188,4 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-}
-
-func Start() {
-	handler := http.NewServeMux()
-
-	handler.Handle("/v1", http.HandlerFunc(webhookHandler))
-
-	http.ListenAndServe(":8080", handler)
 }

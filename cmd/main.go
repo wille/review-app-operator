@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,10 +36,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	"github.com/wille/rac/cmd/proxy"
-	"github.com/wille/rac/cmd/webhooks"
 	"github.com/wille/rac/internal/controller"
-	"github.com/wille/rac/internal/controller/forwarder"
+	"github.com/wille/rac/internal/downscaler"
+	"github.com/wille/rac/internal/forwarder"
+	webhooks "github.com/wille/rac/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -151,11 +152,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	go webhooks.Start()
-	go proxy.Start(mgr.GetClient())
+	if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080"}); err != nil {
+		setupLog.Error(err, "unable to create pull request webhook server")
+		os.Exit(1)
+	}
 
-	fw := forwarder.Downscaler{Client: mgr.GetClient(), TimeoutSeconds: 60 * 10}
-	go fw.StartWatching()
+	if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969"}); err != nil {
+		setupLog.Error(err, "unable to setup the forwarding proxy")
+		os.Exit(1)
+	}
+
+	if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient()}); err != nil {
+		setupLog.Error(err, "unable to create downscaler")
+		os.Exit(1)
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

@@ -28,6 +28,8 @@ spec:
           value: {{ quote .Values.kubernetesClusterDomain }}
         - name: WEBHOOK_SECRET
           value: {{ required "webhook.secret must be set" .Values.webhook.secret }}
+        - name: SCALE_DOWN_AFTER
+          value: {{ .Values.scaleDownAfter }}
         image: {{ .Values.controllerManager.manager.image }}
         livenessProbe:
           httpGet:

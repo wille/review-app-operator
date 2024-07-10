@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"strconv"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -64,12 +66,6 @@ type PullRequestReconciler struct {
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services/status,verbs=get
-
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses/status,verbs=get
-
-// Get, SetControllerReference
-// +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
 
 func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -177,6 +173,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		// Update the target container image with the latest PR image if any is set on the PullRequest
+
+		// container.Image will always be bitrefill/dashboard:latest
 		if pr.Spec.ImageName != "" {
 			for i := 0; i < len(desiredDeployment.Spec.Template.Spec.Containers); i++ {
 				container := &desiredDeployment.Spec.Template.Spec.Containers[i]
@@ -197,6 +195,15 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
+			// New deployments are downscaled by default.
+			// The problem with this approach is that the incoming deploy webhook
+			// will not be able to tell if the pod actually started and became healthy
+			var replicas int32 = 0
+			desiredDeployment.Spec.Replicas = &replicas
+
+			// Set the "last request" time so the downscaler can process it
+			desiredDeployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = strconv.Itoa(int(time.Now().Unix()))
+
 			if err := r.Create(ctx, desiredDeployment); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -215,8 +222,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 					return ctrl.Result{}, err
 				}
-
-				log.Info("Deployment updated", "deploymentName", deploymentName)
 			}
 		}
 
@@ -229,7 +234,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			},
 		}
 
-		// TODO Service name according to RFC 1035
 		desiredSvc := &corev1.Service{
 			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: corev1.ServiceSpec{
@@ -285,38 +289,36 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // SetupWithManager sets up the controller with the Manager.
 func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &appsv1.Deployment{}, pullRequestOwnerKey, func(rawObj client.Object) []string {
-		// grab the job object, extract the owner...
 		job := rawObj.(*appsv1.Deployment)
 		owner := metav1.GetControllerOf(job)
 		if owner == nil {
 			return nil
 		}
 
-		// TODO check APIVERSION!
+		// TODO Do we need to check the APIVersion?
 		if owner.Kind != "PullRequest" {
 			return nil
 		}
 
-		// ...and if so, return it
+		// Index by the Pull Request name
 		return []string{owner.Name}
 	}); err != nil {
 		return err
 	}
 
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Service{}, pullRequestOwnerKey, func(rawObj client.Object) []string {
-		// grab the job object, extract the owner...
 		job := rawObj.(*corev1.Service)
 		owner := metav1.GetControllerOf(job)
 		if owner == nil {
 			return nil
 		}
 
-		// TODO check APIVERSION!
+		// TODO Do we need to check the APIVersion?
 		if owner.Kind != "PullRequest" {
 			return nil
 		}
 
-		// ...and if so, return it
+		// Index by the Pull Request name
 		return []string{owner.Name}
 	}); err != nil {
 		return err

@@ -6,8 +6,10 @@ webhook:
 forwarder:
   ingress:
     annotations: {}
+    # The forwarder host MUST BE a wildcard DNS entry because only one ingress
+    # is used to route requests to the forwarder.
     host: ""
-scaleDownAfter: 6s
+scaleDownAfter: 1h
 controllerManager:
   manager:
     args:

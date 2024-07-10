@@ -1,10 +1,9 @@
-package proxy
+package forwarder
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -18,7 +17,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+var log = ctrl.Log.WithName("forwarder")
 
 // Hop-by-hop headers. These are removed when sent to the backend.
 // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
@@ -54,7 +57,8 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 	header.Set("X-Forwarded-For", host)
 }
 
-type proxy struct {
+type Forwarder struct {
+	Addr string
 	client.Client
 }
 
@@ -68,8 +72,8 @@ func getClusterDomain() string {
 	return "cluster.local"
 }
 
-func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	c := p.Client
+func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c := fwd.Client
 
 	// List all services indexed by the host
 	var list corev1.ServiceList
@@ -110,7 +114,7 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var replicas int32 = 1
 		deployment.Spec.Replicas = &replicas
 
-		log.Println("Scaling up deployment", deployment.Name)
+		log.Info("Scaling up deployment", "name", deployment.Name)
 		doUpdate = true
 	}
 
@@ -159,10 +163,12 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			retries++
 			if retries > 60 {
-				log.Println("Failed to connect to review app", err)
+				log.Error(err, "Giving up connecting to review app", "svc", hostname)
 				http.Error(w, "Connection error", http.StatusGatewayTimeout)
 				return
 			}
+
+			// Delay before trying again
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -172,14 +178,20 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		copyHeader(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
 
-		log.Println(fmt.Sprintf("%s %s %s %s %s->%s", r.RemoteAddr, r.Method, r.URL, resp.Status, r.Host, hostname))
+		_, err = io.Copy(w, resp.Body)
+		if err != nil {
+			log.Error(err, "Error copying response body")
+			return
+		}
+
+		log.Info(fmt.Sprintf("%s %s %s %s %s->%s", r.RemoteAddr, r.Method, r.URL, resp.Status, r.Host, hostname))
 		break
 	}
 
 }
 
-func Start(client client.Client) {
-	http.ListenAndServe(":6969", &proxy{client})
+func (fw Forwarder) Start(ctx context.Context) error {
+	log.Info("Starting forwarding proxy", "addr", fw.Addr)
+	return http.ListenAndServe(fw.Addr, fw)
 }
