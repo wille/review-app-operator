@@ -85,7 +85,7 @@ func (ds Downscaler) run(dur time.Duration) {
 		}
 
 		lastRequest := time.Unix(int64(timestamp), 0)
-		treshold := lastRequest.Add(dur * time.Second)
+		treshold := lastRequest.Add(dur)
 
 		// If the latest request was more than TimeoutSeconds ago, scale down the deployment
 		if treshold.Before(time.Now()) {
@@ -98,7 +98,7 @@ func (ds Downscaler) run(dur time.Duration) {
 				continue
 			}
 
-			log.Info("Scaled down", deployment.Name)
+			log.Info("Scaled down", "name", deployment.Name)
 		}
 	}
 }
