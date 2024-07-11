@@ -165,7 +165,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		log.Info("Create webhook received", "webhook", webhook)
 
-		_, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
+		pr, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
 			Name:      pullRequestResourceName,
 			Namespace: reviewApp.Namespace,
 		}, williamnuv1alpha1.PullRequestSpec{
@@ -180,9 +180,27 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// deploymentUrl := utils.GetDeploymentHostname(&reviewApp, pr, "deployment")
+		// Pick the first deployment in the .spec.deployments list
+		primaryDeploymentSpec := reviewApp.Spec.Deployments[0]
 
-		w.Write([]byte("Review App URL: " + "https://example.com"))
+		// Use the first host template in the .spec.deployments.*.hostTemplates list
+		template := primaryDeploymentSpec.HostTemplates[0]
+		deploymentUrl, err := utils.GetHostnameFromTemplate(template, primaryDeploymentSpec.Name, *pr, reviewApp)
+		if err != nil {
+			log.Error(err, "Error getting deployment url")
+			http.Error(w, "Error getting deployment url", http.StatusInternalServerError)
+			return
+		}
+
+		// Only return the "primary" host URL for now.
+		// If you have multiple hostnames for a deployment, like when a container
+		// is serving multiple websites and you need to rely on the Host header,
+		// the github pull request would be cluttered by one deployment for every host.
+		//
+		// Since the response is streamed to the Github Action so you can follow progress
+		// in real time, we just stream status text and finish with a `Review App URL: <url>`
+		// that is parsed by the action
+		w.Write([]byte("Review App URL: " + deploymentUrl))
 		return
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

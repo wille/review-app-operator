@@ -78,7 +78,7 @@ func CreateOrUpdatePullRequest(
 			}
 
 			w.WriteHeader(http.StatusCreated)
-			writeFlush(w, fmt.Sprintf("Created pull request \"%s\" for branch \"%s\"", pr.Name, pr.Spec.BranchName))
+			writeFlush(w, fmt.Sprintf("Created pull request \"%s\" for branch \"%s\"\n", pr.Name, pr.Spec.BranchName))
 		} else {
 			log.Error(err, "Error getting pull request", "name", key.Name)
 			return nil, err
