@@ -5,23 +5,26 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-  {{ toYaml .Values.webhook.ingress.annotations | nindent 4 }}
+  {{- toYaml .Values.webhook.ingress.annotations | nindent 4 }}
 spec:
+  {{- if .Values.forwarder.ingress.tls }}
   tls:
-  - hosts:
-    - '{{ .Values.forwarder.ingress.host }}'
+  - hosts: {{ toYaml .Values.forwarder.ingress.hosts | nindent 4 }}
     secretName: {{ include "chart.fullname" . }}-forwarder-secret
+  {{- end }}
   rules:
-  - host: '{{ required "forwarder.ingress.host must be set" .Values.forwarder.ingress.host }}'
+  {{- range .Values.forwarder.ingress.hosts }}
+  - host: {{ required "host must not be empty" . | toYaml }}
     http:
       paths:
       - backend:
           service:
-            name: '{{ include "chart.fullname" . }}-forwarder'
+            name: {{ include "chart.fullname" $ }}-forwarder
             port:
               number: 6969
         path: /
         pathType: Prefix
+  {{- end}}
 
 ---
 

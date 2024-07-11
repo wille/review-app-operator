@@ -55,9 +55,9 @@ var _ = Describe("Hostname templates", func() {
 	deploymentName := "nginx"
 
 	It("should generate a valid hostname from a template", func() {
-		Expect(GetHostnameFromTemplate("{{branchName}}", deploymentName, pr, reviewApp)).To(Equal("feature-v1.review.example.com"))
-		Expect(GetHostnameFromTemplate("{{branchName}}-{{deploymentName}}", deploymentName, pr, reviewApp)).To(Equal("feature-v1-nginx.review.example.com"))
-		Expect(GetHostnameFromTemplate("{{reviewAppName}}-{{branchName}}-{{deploymentName}}", deploymentName, pr, reviewApp)).To(Equal("review-sample-feature-v1-nginx.review.example.com"))
-		Expect(GetHostnameFromTemplate(strings.Repeat("a", validation.DNS1123LabelMaxLength+5), deploymentName, pr, reviewApp)).To(HaveLen(validation.DNS1123LabelMaxLength + 1 + len(reviewApp.Spec.Domain)))
+		Expect(GetHostnameFromTemplate("{{.BranchName}}", deploymentName, pr, reviewApp)).To(Equal("feature-v1.review.example.com"))
+		Expect(GetHostnameFromTemplate("{{.BranchName}}-{{.DeploymentName}}", deploymentName, pr, reviewApp)).To(Equal("feature-v1-nginx.review.example.com"))
+		Expect(GetHostnameFromTemplate("{{.ReviewApp}}-{{.BranchName}}-{{.DeploymentName}}", deploymentName, pr, reviewApp)).To(Equal("review-sample-feature-v1-nginx.review.example.com"))
+		Expect(GetHostnameFromTemplate(strings.Repeat("a", validation.DNS1123LabelMaxLength+5), deploymentName, pr, reviewApp)).To(HaveLen(validation.DNS1123LabelMaxLength + 1))
 	})
 })

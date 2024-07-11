@@ -7,10 +7,12 @@ metadata:
   annotations:
   {{ toYaml .Values.webhook.ingress.annotations | nindent 4 }}
 spec:
+  {{- if .Values.forwarder.ingress.tls }}
   tls:
   - hosts:
     - '{{ .Values.webhook.ingress.host }}'
     secretName: {{ include "chart.fullname" . }}-webhook-server-secret
+  {{- end }}
   rules:
   - host: '{{ required "webhook.ingress.host must be set" .Values.webhook.ingress.host }}'
     http:

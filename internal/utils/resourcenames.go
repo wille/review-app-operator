@@ -57,13 +57,14 @@ func normalize(s string) string {
 
 // GetHostnameFromTemplate generates a hostname from a template string.
 // Permitted variables are
-// - {{reviewAppName}}
-// - {{branchName}}
-// - {{deploymentName}}
+// - {{.ReviewApp}}
+// - {{.BranchName}}
+// - {{.DeploymentName}}
 func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequest, reviewApp ReviewApp) (string, error) {
-	s := strings.ReplaceAll(template, "{{branchName}}", pr.Spec.BranchName)
-	s = strings.ReplaceAll(s, "{{reviewAppName}}", reviewApp.Name)
-	s = strings.ReplaceAll(s, "{{deploymentName}}", deploymentName)
+	// Uses go template syntax
+	s := strings.ReplaceAll(template, "{{.BranchName}}", pr.Spec.BranchName)
+	s = strings.ReplaceAll(s, "{{.ReviewApp}}", reviewApp.Name)
+	s = strings.ReplaceAll(s, "{{.DeploymentName}}", deploymentName)
 	s = normalize(s)
 
 	if len(s) > validation.DNS1123LabelMaxLength {

@@ -2,13 +2,19 @@ webhook:
   secret: ""
   ingress:
     annotations: {}
-    host: ""
+    # cert-manager.io/cluster-issuer: letsencrypt
+    tls: false
+    host: "" # review-app-webhooks.example.com
 forwarder:
   ingress:
     annotations: {}
-    # The forwarder host MUST BE a wildcard DNS entry because only one ingress
-    # is used to route requests to the forwarder.
-    host: ""
+    # cert-manager.io/cluster-issuer: letsencrypt
+    tls: false
+    hosts:
+      # The forwarder hosts MUST BE a wildcard DNS entry because only one ingress
+      # is used to route requests to the forwarder.
+      # - "*.review-apps.example.com"
+      - ""
 scaleDownAfter: 1h
 controllerManager:
   manager:
