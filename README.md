@@ -6,7 +6,13 @@ A Kubernetes operator for creating staging/preview environments for pull request
 
 It's intended to be the most simple solution to have fully functional dynamic staging review environments for pull requests and to not waste computing resources by automatically stopping environments that are not used and starting them again on demand.
 
-Review App Action [Review App Action](https://github.com/wille/review-app-action)
+Use the [Review App Action](https://github.com/wille/review-app-action) to keep deployments in sync with Pull Requests.
+
+The Review App Operator consists of two main components:
+
+- **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
+- **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand
+- **Downscaler**: Watches pull request deployments and downscales if no traffic is received after `scaleDownAfter` (default 1h)
 
 ## Installation
 
@@ -25,19 +31,21 @@ webhook:
   secret: secret-string
   ingress:
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt
+      cert-manager.io/cluster-issuer: letsencrypt # Use cert-manager to issue a certificate for the webhook Ingress
+    tls: true # Enable TLS for the ingress
     host: review-app-webhooks.example.com
 forwarder:
   ingress:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
-    host: "*.review-apps.example.com"
-scaleDownAfter: 1h
+    hosts:
+      - "*.review-apps.example.com"
+scaleDownAfter: 1h # scale down a pull request deployment if inactive for this long
 ```
 
 > [!IMPORTANT]
 >
-> - The `forwarder.ingress.host` field must be a a wildcard hostname as only one Ingress is used to route traffic to the forwarder
+> - The `forwarder.ingress.host` field must be a a wildcard hostname as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewApp`
 > - The `webhook.ingress.host` is the host used for the [Review App Action](https://github.com/wille/review-app-action) webhook
 
 ## Install with Helm
@@ -49,11 +57,13 @@ $ helm install review-app-operator review-app-operator/review-app-operator \
     -f values.yaml
 ```
 
-## Description
+## Creating a Review App
 
 The Review App Controller introduces two new Kubernetes resources: `ReviewApp` and `PullRequest`.
 
-The `ReviewApp` is similar to a `Deployment` but with extra fields to
+The `ReviewApp` is similar to a `Deployment` but with extra fields to select which container and port to target.
+
+### `my-review-app.yml`
 
 ```yaml
 apiVersion: rac.william.nu/v1alpha1
@@ -62,35 +72,38 @@ metadata:
   name: my-review-app
   namespace: staging
 spec:
-  # The domain suffix to use for the review apps
-  domain: review-apps.example.com
   deployments:
     - name: test
-      targetContainerName: test
-      targetContainerPort: 80
+      targetContainerName: test # Update this container when a Pull request is opened or updated
+      targetContainerPort: 80 # The container port to forward traffic to
       hostTemplates:
         # The host template to use for the review app
         # This will be combined with the `.spec.domain` like:
         # `test-branch-name.review-apps.example.com`
-        - "test-{{branchName}}"
+        - "test-{{.BranchName}}.review-apps.example.com"
       template:
         spec:
           containers:
-            - name: test
+            - name: test # Update this container when a Pull request is opened or updated
               image: nginx:latest
               ports:
                 - containerPort: 80
+            - name: redis
+              image: redis:7
 ```
 
-> [!INFO]
-> See the [ReviewApp sample](/config/samples/rac.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example
+Create this ReviewApp
+`kubectl apply -f my-review-app.yml`
 
-> [!INFO]
-> A Review App template may contain multiple deployments
+> [!NOTE]
+> See the [ReviewApp sample](/config/samples/rac.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
+>
+> Hostnames can be templated with `{{.ReviewApp}}`, `{{.BranchName}}`, `{{.DeploymentName}}`
 
-## PullRequest
+## PullRequest example
 
-The PullRequest custom resource definition is used to create a new review app for a specific branch.
+> [!IMPORTANT]
+> Pull requests should not have to be created manually, the [Review App Action](https://github.com/wille/review-app-action) will do it for you. This is included to show how it works behind the scenes.
 
 ```yaml
 apiVersion: rac.william.nu/v1alpha1
@@ -104,17 +117,6 @@ spec:
   # The name of the review app to create
   reviewAppName: my-review-app
 
+  # The latest deployed image
   imageName: <user>/<repo>:29df5a41b93906346d693c90adcd8acf266893c3@sha256:...
 ```
-
-## Getting Started
-
-## Installation
-
-> [!TIP]
-> ss
-
-The Review App Operator consists of two main components:
-
-- **ReviewApp**: The controller responsible for creating and managing the deployments
-- **Forwarder**: The proxy responsible for starting and stopping deployments on demand
