@@ -187,8 +187,8 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		template := primaryDeploymentSpec.HostTemplates[0]
 		deploymentUrl, err := utils.GetHostnameFromTemplate(template, primaryDeploymentSpec.Name, *pr, reviewApp)
 		if err != nil {
-			log.Error(err, "Error getting deployment url")
-			http.Error(w, "Error getting deployment url", http.StatusInternalServerError)
+			log.Error(err, "Error creating deployment url from template")
+			http.Error(w, "Error creating deployment url from template", http.StatusInternalServerError)
 			return
 		}
 

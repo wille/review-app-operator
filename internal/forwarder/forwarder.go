@@ -204,5 +204,17 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (fw Forwarder) Start(ctx context.Context) error {
 	log.Info("Starting forwarding proxy", "addr", fw.Addr)
-	return http.ListenAndServe(fw.Addr, fw)
+
+	srv := http.Server{Addr: fw.Addr, Handler: fw}
+
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutting down forwarding proxy")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	return srv.ListenAndServe()
 }

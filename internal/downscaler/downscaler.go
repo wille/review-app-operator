@@ -51,11 +51,16 @@ func (ds Downscaler) Start(ctx context.Context) error {
 	log.Info("starting downscaler", "scaleDownAfter", dur)
 
 	ticker := time.NewTicker(time.Second * 10)
-	for range ticker.C {
-		ds.run(dur)
-	}
 
-	return nil
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("Stopping downscaler")
+			return nil
+		case <-ticker.C:
+			ds.run(dur)
+		}
+	}
 }
 
 func (ds Downscaler) run(dur time.Duration) {
