@@ -32,8 +32,6 @@ spec:
                 items:
                   properties:
                     hostTemplates:
-                      default:
-                      - '{{reviewAppName}}-{{branchName}}'
                       items:
                         type: string
                       type: array
@@ -3643,17 +3641,15 @@ spec:
                           type: object
                       type: object
                   required:
+                  - hostTemplates
                   - name
                   - targetContainerName
                   - targetContainerPort
                   - template
                   type: object
                 type: array
-              domain:
-                type: string
             required:
             - deployments
-            - domain
             type: object
           status:
             properties:

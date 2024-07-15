@@ -5,14 +5,13 @@ metadata:
   labels:
     mylabel: mylabel
 spec:
-  domain: review.example.com
   deployments:
     # A staging environment pointing to your read only production database
     - name: prod
       targetContainerName: nginx
       targetContainerPort: 80
       hostTemplates:
-        - "template-{{.BranchName}}"
+        - "template-{{.BranchName}}.review.example.com"
       template:
         spec:
           # It's recommended to run your staging containers on a separate node pool

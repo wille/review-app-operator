@@ -61,31 +61,34 @@ func normalize(s string) string {
 // - {{.BranchName}}
 // - {{.DeploymentName}}
 func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequest, reviewApp ReviewApp) (string, error) {
+	if !strings.Contains(template, "{{.BranchName}}") {
+		return "", fmt.Errorf("Template %s does not contain {{.BranchName}}", template)
+	}
+
 	// Uses go template syntax
-	s := strings.ReplaceAll(template, "{{.BranchName}}", pr.Spec.BranchName)
-	s = strings.ReplaceAll(s, "{{.ReviewApp}}", reviewApp.Name)
-	s = strings.ReplaceAll(s, "{{.DeploymentName}}", deploymentName)
-	s = normalize(s)
+	s := strings.ReplaceAll(template, "{{.BranchName}}", normalize(pr.Spec.BranchName))
+	s = strings.ReplaceAll(s, "{{.ReviewApp}}", normalize(reviewApp.Name))
+	s = strings.ReplaceAll(s, "{{.DeploymentName}}", normalize(deploymentName))
 
-	if len(s) > validation.DNS1123LabelMaxLength {
-		s = normalize(s[:validation.DNS1123LabelMaxLength])
+	// Split template-x.review.example.com into template-x, review.example.com
+	// and ensure that it isn't too long
+	label, domain, _ := strings.Cut(s, ".")
+	label = strings.TrimSuffix(label, ".")
+
+	if domain == "" {
+		return "", fmt.Errorf("No domain in %s", s)
 	}
 
-	if len(s+"."+reviewApp.Spec.Domain) > validation.DNS1123SubdomainMaxLength {
-		s = normalize(s[:validation.DNS1123SubdomainMaxLength-len(reviewApp.Spec.Domain)-1])
+	// Try to cut the long dns label to a valid length
+	if len(label) > validation.DNS1123LabelMaxLength {
+		label = normalize(label[:validation.DNS1123LabelMaxLength])
 	}
 
-	if err := validation.IsDNS1123Label(s); err != nil {
-		return "", fmt.Errorf("generated host template '%s' is invalid: %s", s, err[0])
-	}
-
-	s = s + "." + reviewApp.Spec.Domain
+	s = fmt.Sprintf("%s.%s", label, domain)
 
 	if err := validation.IsDNS1123Subdomain(s); err != nil {
 		return "", fmt.Errorf("generated host template '%s' is invalid %s", s, err[0])
 	}
-
-	// Service is DNS1035 64 chars no digit start
 
 	return s, nil
 }

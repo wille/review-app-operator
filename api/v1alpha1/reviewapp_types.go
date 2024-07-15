@@ -26,8 +26,7 @@ type Deployments struct {
 	TargetContainerName string `json:"targetContainerName"`
 	TargetContainerPort int32  `json:"targetContainerPort"`
 
-	// +kubebuilder:default:={"{{reviewAppName}}-{{branchName}}"}
-	// +optional
+	// HostTemplates must contain at least {{.BranchName}}
 	HostTemplates []string `json:"hostTemplates"`
 
 	// generateEmbeddedObjectMeta must be set for this to work
@@ -36,9 +35,6 @@ type Deployments struct {
 
 // ReviewAppSpec defines the desired state of ReviewApp
 type ReviewAppSpec struct {
-	// TODO Validating webhook with IsDNS1123Subdomain
-	Domain string `json:"domain"`
-
 	Deployments []Deployments `json:"deployments"`
 }
 
