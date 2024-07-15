@@ -23,6 +23,11 @@ import (
 
 var log = ctrl.Log.WithName("forwarder")
 
+const (
+	maxRetries        = 120
+	retryDelaySeconds = 1
+)
+
 // Hop-by-hop headers. These are removed when sent to the backend.
 // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
 var hopHeaders = []string{
@@ -145,6 +150,12 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	retries := 0
 
 	for {
+		select {
+		// Connection closed
+		case <-r.Context().Done():
+			return
+		default:
+		}
 		client := &http.Client{}
 
 		//http: Request.RequestURI can't be set in client requests.
@@ -162,14 +173,14 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		resp, err := client.Do(r)
 		if err != nil {
 			retries++
-			if retries > 60 {
+			if retries > maxRetries {
 				log.Error(err, "Giving up connecting to review app", "svc", hostname)
 				http.Error(w, "Connection error", http.StatusGatewayTimeout)
 				return
 			}
 
 			// Delay before trying again
-			time.Sleep(1 * time.Second)
+			time.Sleep(retryDelaySeconds * time.Second)
 			continue
 		}
 		defer resp.Body.Close()
