@@ -25,6 +25,8 @@ spec:
     - name: staging
       targetContainerName: nginx
       targetContainerPort: 80
+      hostTemplates:
+        - "staging-{{.BranchName}}.review.example.com"
       template:
         spec:
           containers:

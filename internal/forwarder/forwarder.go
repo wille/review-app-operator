@@ -13,9 +13,7 @@ import (
 
 	"github.com/wille/rac/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/types"
 
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -80,36 +78,27 @@ func getClusterDomain() string {
 func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := fwd.Client
 
-	// List all services indexed by the host
-	var list corev1.ServiceList
+	// List all deployments indexed by the host
+	var list appsv1.DeploymentList
 	if err := c.List(context.Background(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
 		panic(err)
 	}
 
 	if len(list.Items) == 0 {
-		// No services indexed for this host found
-		fmt.Println("No service found for host", r.Host)
+		// No deployments indexed for this host found
+		fmt.Println("No deployment found for host", r.Host)
 		http.Error(w, fmt.Sprintf("No review app found for host %s", r.Host), http.StatusNotFound)
 		return
 	}
 
 	if len(list.Items) > 1 {
-		// More than one service indexed for this host found
-		fmt.Println("More than one service found for host", r.Host)
+		// More than one deployment indexed for this host found
+		fmt.Println("More than one deployment found for host", r.Host)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	svc := list.Items[0]
-
-	// Read the deployment that the service routes to.
-	// This assumes that the deployment has the same name as the service.
-	var deployment appsv1.Deployment
-	if err := c.Get(r.Context(), types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, &deployment); err != nil {
-		fmt.Println("Error getting deployment:", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+	deployment := list.Items[0]
 
 	doUpdate := false
 	patch := client.MergeFrom(deployment.DeepCopy())
@@ -121,10 +110,6 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		log.Info("Scaling up deployment", "name", deployment.Name)
 		doUpdate = true
-	}
-
-	if deployment.ObjectMeta.Annotations == nil {
-		deployment.ObjectMeta.Annotations = make(map[string]string)
 	}
 
 	// Update the deployment's last request annotation only if it has changed to avoid excessive requests
@@ -143,9 +128,10 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Format the target service to forward the request to
-	// eg. review-app-1.default.svc.cluster.local:8080
-	port := svc.Spec.Ports[0].TargetPort.String()
-	hostname := fmt.Sprintf("%s.%s.svc.%s:%s", svc.Name, svc.Namespace, getClusterDomain(), port)
+	// eg. review-app-1.default.svc.cluster.local:80
+	// Always uses port 80
+	port := 80
+	hostname := fmt.Sprintf("%s.%s.svc.%s:%d", deployment.Name, deployment.Namespace, getClusterDomain(), port)
 
 	retries := 0
 
@@ -172,9 +158,12 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		resp, err := client.Do(r)
 		if err != nil {
+			if retries == 0 {
+				log.Error(err, "Error connecting to review app, retrying...", "hostname", hostname, "deployment", deployment.Name)
+			}
 			retries++
 			if retries > maxRetries {
-				log.Error(err, "Giving up connecting to review app", "svc", hostname)
+				log.Error(err, "Giving up connecting to review app", "hostname", hostname, "deployment", deployment.Name)
 				http.Error(w, "Connection error", http.StatusGatewayTimeout)
 				return
 			}
@@ -216,5 +205,6 @@ func (fw Forwarder) Start(ctx context.Context) error {
 		srv.Shutdown(ctx)
 	}()
 
+	// TODO will error when closed
 	return srv.ListenAndServe()
 }

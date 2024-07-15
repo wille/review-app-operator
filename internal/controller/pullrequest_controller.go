@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"strconv"
 	"time"
@@ -172,6 +173,20 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			},
 		}
 
+		// Get the hostnames for this deployment
+		hostnames, err := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, reviewApp)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		enc, err := json.Marshal(hostnames)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// Annotate the deployment with the hostnames for this pull request.
+		// The forwarder will target this deployment and keep track of requests
+		desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
+
 		// Update the target container image with the latest PR image if any is set on the PullRequest
 
 		// container.Image will always be bitrefill/dashboard:latest
@@ -213,11 +228,14 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			// Deployment labels or spec differs from desired spec
 			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec.Template, runningDeployment.Spec.Template) ||
-				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) {
+				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) ||
+				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] != desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] {
+
 				patch := client.MergeFrom(runningDeployment.DeepCopy())
 
 				runningDeployment.ObjectMeta.Labels = desiredLabels
 				runningDeployment.Spec.Template = desiredDeployment.Spec.Template
+				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
 
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 					return ctrl.Result{}, err
@@ -225,26 +243,22 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 		}
 
-		// Add all ports from all containers to the service
-		ports := []corev1.ServicePort{
-			{
-				Name:       "http",
-				Port:       deploymentSpec.TargetContainerPort,
-				TargetPort: intstr.FromInt(int(deploymentSpec.TargetContainerPort)),
-			},
-		}
-
 		desiredSvc := &corev1.Service{
 			ObjectMeta: *objectMeta.DeepCopy(),
 			Spec: corev1.ServiceSpec{
 				Selector: selectorLabels,
 				Type:     corev1.ServiceTypeClusterIP,
-				Ports:    ports,
+				Ports: []corev1.ServicePort{
+					{
+						Name: "http",
+
+						// Always use port 80, the forwarder assumes this as well
+						Port:       80,
+						TargetPort: intstr.FromInt(int(deploymentSpec.TargetContainerPort)),
+					},
+				},
 			},
 		}
-		hosts, _ := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, reviewApp)
-		enc, _ := json.Marshal(hosts)
-		desiredSvc.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
 
 		// If a .spec.deployment.name changes, the old service will not be cleaned up
 		var activeSvc corev1.Service
@@ -335,15 +349,16 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// Index services by the hosts annotation to query them in the proxy
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Service{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
-		svc := rawObj.(*corev1.Service)
-
-		var hosts []string
+	// Index deployments by the hosts annotation to query them in the forwarder
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &appsv1.Deployment{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
+		svc := rawObj.(*appsv1.Deployment)
 
 		if enc, ok := svc.Annotations[utils.HostAnnotation]; ok {
-			// TODO error
-			json.Unmarshal([]byte(enc), &hosts)
+			var hosts []string
+			if err := json.Unmarshal([]byte(enc), &hosts); err != nil {
+				fmt.Printf("Failed to unmarshal deployment %s host annotation: %s\n", svc.Name, err)
+				return []string{}
+			}
 			return hosts
 		}
 
