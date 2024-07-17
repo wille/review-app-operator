@@ -20,7 +20,7 @@ import (
 	"context"
 
 	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,14 +36,14 @@ type ReviewAppReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=rac.william.nu,resources=reviewapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps/finalizers,verbs=update
 
 func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	reviewApp := &racwilliamnuv1alpha1.ReviewApp{}
+	reviewApp := &reviewapps.ReviewApp{}
 	if err := r.Get(ctx, req.NamespacedName, reviewApp); err != nil {
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
@@ -90,7 +90,7 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// var s keda.ScaledObject
 	// log.Info(s)
-	var list racwilliamnuv1alpha1.PullRequestList
+	var list reviewapps.PullRequestList
 	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{"spec.reviewAppRef": req.Name}); err != nil {
 		log.Error(err, "unable to list child Jobs")
 		return ctrl.Result{}, err
@@ -105,9 +105,9 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &racwilliamnuv1alpha1.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
 		// grab the job object, extract the owner...
-		job := rawObj.(*racwilliamnuv1alpha1.PullRequest)
+		job := rawObj.(*reviewapps.PullRequest)
 		owner := metav1.GetControllerOf(job)
 		if owner == nil {
 			return nil
@@ -125,12 +125,12 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&racwilliamnuv1alpha1.ReviewApp{}).
-		Owns(&racwilliamnuv1alpha1.PullRequest{}).
+		For(&reviewapps.ReviewApp{}).
+		Owns(&reviewapps.PullRequest{}).
 		Complete(r)
 }
 
-func (r *ReviewAppReconciler) deleteExternalResources(ctx context.Context, cronJob *racwilliamnuv1alpha1.ReviewApp) error {
+func (r *ReviewAppReconciler) deleteExternalResources(ctx context.Context, cronJob *reviewapps.ReviewApp) error {
 	//
 
 	// log := log.FromContext(ctx)

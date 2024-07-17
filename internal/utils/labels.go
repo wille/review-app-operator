@@ -3,7 +3,7 @@ package utils
 import (
 	"maps"
 
-	. "github.com/wille/rac/api/v1alpha1"
+	. "github.com/wille/review-app-operator/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -12,11 +12,11 @@ var MatchingLabels = client.MatchingLabels{"app.kubernetes.io/managed-by": "revi
 
 // LastRequestTimeAnnotation is the annotation set on deployments to signal
 // when the last request was made there so it can be downscaled
-const LastRequestTimeAnnotation = "rac/last-request"
+const LastRequestTimeAnnotation = "reviewapps.william.nu/last-request"
 
 // HostAnnotation is set on services to store the hostnames they are active for
 // and is used by the indexer
-const HostAnnotation = "rac/hosts"
+const HostAnnotation = "reviewapps.william.nu/hosts"
 
 // HostIndexFieldName is the field indexes on Services to store the hostnames they are active for
 const HostIndexFieldName = ".hosts"

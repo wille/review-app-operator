@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 var _ = Describe("ReviewApp Controller", func() {
@@ -40,13 +40,13 @@ var _ = Describe("ReviewApp Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		reviewapp := &racwilliamnuv1alpha1.ReviewApp{}
+		reviewapp := &reviewapps.ReviewApp{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ReviewApp")
 			err := k8sClient.Get(ctx, typeNamespacedName, reviewapp)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &racwilliamnuv1alpha1.ReviewApp{
+				resource := &reviewapps.ReviewApp{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,7 +59,7 @@ var _ = Describe("ReviewApp Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &racwilliamnuv1alpha1.ReviewApp{}
+			resource := &reviewapps.ReviewApp{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

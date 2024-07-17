@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	"github.com/wille/rac/internal/utils"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/utils"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -27,7 +27,7 @@ func DeletePullRequestByName(key types.NamespacedName) error {
 		return err
 	}
 
-	var pr racwilliamnuv1alpha1.PullRequest
+	var pr reviewapps.PullRequest
 	if err := c.Get(context.TODO(), key, &pr); err != nil {
 		return err
 	}
@@ -49,11 +49,11 @@ func writeFlush(w http.ResponseWriter, s string) {
 // CreateOrUpdatePullRequest ensures that the desired pull request exists and is up to date
 // and streams the status of the deployments to the response writer
 func CreateOrUpdatePullRequest(
-	reviewApp *racwilliamnuv1alpha1.ReviewApp,
+	reviewApp *reviewapps.ReviewApp,
 	key types.NamespacedName,
-	spec racwilliamnuv1alpha1.PullRequestSpec,
+	spec reviewapps.PullRequestSpec,
 	w http.ResponseWriter,
-) (*racwilliamnuv1alpha1.PullRequest, error) {
+) (*reviewapps.PullRequest, error) {
 	log := log.Log.WithName("webhooks")
 
 	c, err := utils.GetKubernetesClient()
@@ -61,7 +61,7 @@ func CreateOrUpdatePullRequest(
 		return nil, err
 	}
 
-	pr := racwilliamnuv1alpha1.PullRequest{
+	pr := reviewapps.PullRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      key.Name,
 			Labels:    reviewApp.Labels,

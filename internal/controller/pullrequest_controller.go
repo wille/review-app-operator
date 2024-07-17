@@ -43,8 +43,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	"github.com/wille/rac/internal/utils"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/utils"
 )
 
 const (
@@ -58,9 +58,9 @@ type PullRequestReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=rac.william.nu,resources=pullrequests/finalizers,verbs=update
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=pullrequests,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=pullrequests/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=pullrequests/finalizers,verbs=update
 
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get
@@ -71,13 +71,13 @@ type PullRequestReconciler struct {
 func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	pr := &racwilliamnuv1alpha1.PullRequest{}
+	pr := &reviewapps.PullRequest{}
 	if err := r.Get(ctx, req.NamespacedName, pr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	// The reviewApp referenced by the PullRequest
-	var reviewApp racwilliamnuv1alpha1.ReviewApp
+	var reviewApp reviewapps.ReviewApp
 	if err := r.Get(ctx, types.NamespacedName{Name: pr.Spec.ReviewAppRef, Namespace: req.Namespace}, &reviewApp); err != nil {
 		if apierrors.IsNotFound(err) {
 			// No ReviewApp for reviewAppRef found
@@ -339,8 +339,8 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	// Index PullRequest resources based on .spec.reviewAppRef
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &racwilliamnuv1alpha1.PullRequest{}, reviewAppRefField, func(rawObj client.Object) []string {
-		configDeployment := rawObj.(*racwilliamnuv1alpha1.PullRequest)
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, reviewAppRefField, func(rawObj client.Object) []string {
+		configDeployment := rawObj.(*reviewapps.PullRequest)
 		if configDeployment.Spec.ReviewAppRef == "" {
 			return nil
 		}
@@ -368,12 +368,12 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&racwilliamnuv1alpha1.PullRequest{}).
+		For(&reviewapps.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		// Watch for changes to ReviewApp resources
 		Watches(
-			&racwilliamnuv1alpha1.ReviewApp{},
+			&reviewapps.ReviewApp{},
 			handler.EnqueueRequestsFromMapFunc(r.findPullRequestsForReviewApp),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
@@ -382,7 +382,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // findPullRequestsForReviewApp returns a list of PullRequest resources that reference the given ReviewApp
 func (r *PullRequestReconciler) findPullRequestsForReviewApp(ctx context.Context, reviewApp client.Object) []reconcile.Request {
-	var prs racwilliamnuv1alpha1.PullRequestList
+	var prs reviewapps.PullRequestList
 	err := r.List(ctx, &prs, &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(reviewAppRefField, reviewApp.GetName()),
 		Namespace:     reviewApp.GetNamespace(),

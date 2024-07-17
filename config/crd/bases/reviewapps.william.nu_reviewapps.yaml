@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.15.0
-  name: reviewapps.rac.william.nu
+  name: reviewapps.reviewapps.william.nu
 spec:
-  group: rac.william.nu
+  group: reviewapps.william.nu
   names:
     kind: ReviewApp
     listKind: ReviewAppList

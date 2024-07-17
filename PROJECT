@@ -2,28 +2,28 @@
 # This file is used to track the info used to scaffold your project
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
-domain: rac.william.nu
+domain: reviewapps.william.nu
 layout:
-- go.kubebuilder.io/v4
-projectName: rac2
-repo: github.com/wille/rac
+  - go.kubebuilder.io/v4
+projectName: review-app-operator
+repo: github.com/wille/review-app-operator
 resources:
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: rac.william.nu
-  group: rac.william.nu
-  kind: ReviewApp
-  path: github.com/wille/rac/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: rac.william.nu
-  group: rac.william.nu
-  kind: PullRequest
-  path: github.com/wille/rac/api/v1alpha1
-  version: v1alpha1
+  - api:
+      crdVersion: v1
+      namespaced: true
+    controller: true
+    domain: william.nu
+    group: reviewapps.william.nu
+    kind: ReviewApp
+    path: github.com/wille/review-app-controller/api/v1alpha1
+    version: v1alpha1
+  - api:
+      crdVersion: v1
+      namespaced: true
+    controller: true
+    domain: william.nu
+    group: reviewapps.william.nu
+    kind: PullRequest
+    path: github.com/wille/review-app-controller/api/v1alpha1
+    version: v1alpha1
 version: "3"

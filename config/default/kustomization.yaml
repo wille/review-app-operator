@@ -1,12 +1,12 @@
 # Adds namespace to all resources.
-namespace: rac2-system
+namespace: review-app-operator-system
 
 # Value of this field is prepended to the
 # names of all resources, e.g. a deployment named
 # "wordpress" becomes "alices-wordpress".
 # Note that it should also match with the prefix (text before '-') of the namespace
 # field above.
-namePrefix: rac2-
+namePrefix: review-app-operator-
 
 # Labels to add to all resources and selectors.
 #labels:
@@ -15,9 +15,9 @@ namePrefix: rac2-
 #    someName: someValue
 
 resources:
-- ../crd
-- ../rbac
-- ../manager
+  - ../crd
+  - ../rbac
+  - ../manager
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 #- ../webhook

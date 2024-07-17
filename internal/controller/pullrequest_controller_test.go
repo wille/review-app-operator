@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 var _ = Describe("PullRequest Controller", func() {
@@ -40,18 +40,18 @@ var _ = Describe("PullRequest Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		pullrequest := &racwilliamnuv1alpha1.PullRequest{}
+		pullrequest := &reviewapps.PullRequest{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind PullRequest")
 			err := k8sClient.Get(ctx, typeNamespacedName, pullrequest)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &racwilliamnuv1alpha1.PullRequest{
+				resource := &reviewapps.PullRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					Spec: racwilliamnuv1alpha1.PullRequestSpec{
+					Spec: reviewapps.PullRequestSpec{
 						ReviewAppRef: "test-reviewapp",
 					},
 				}
@@ -61,7 +61,7 @@ var _ = Describe("PullRequest Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &racwilliamnuv1alpha1.PullRequest{}
+			resource := &reviewapps.PullRequest{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

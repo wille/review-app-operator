@@ -18,9 +18,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	williamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	"github.com/wille/rac/internal/reviewapp"
-	"github.com/wille/rac/internal/utils"
+	reviewappsv1alpha1v1alpha1 "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/reviewapp"
+	"github.com/wille/review-app-operator/internal/utils"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -119,9 +119,9 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	williamnuv1alpha1.AddToScheme(scheme.Scheme)
+	reviewappsv1alpha1v1alpha1.AddToScheme(scheme.Scheme)
 	c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
-	reviewApp := williamnuv1alpha1.ReviewApp{}
+	reviewApp := reviewappsv1alpha1v1alpha1.ReviewApp{}
 	if err := c.Get(context.TODO(), types.NamespacedName{
 		Name:      webhook.ReviewAppName,
 		Namespace: webhook.ReviewAppNamespace,
@@ -168,7 +168,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		pr, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
 			Name:      pullRequestResourceName,
 			Namespace: reviewApp.Namespace,
-		}, williamnuv1alpha1.PullRequestSpec{
+		}, reviewappsv1alpha1v1alpha1.PullRequestSpec{
 			ReviewAppRef: reviewApp.Name,
 			ImageName:    webhook.Image,
 			BranchName:   webhook.BranchName,

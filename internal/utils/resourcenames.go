@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/wille/rac/api/v1alpha1"
+	. "github.com/wille/review-app-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 

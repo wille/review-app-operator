@@ -1,4 +1,4 @@
-apiVersion: rac.william.nu/v1alpha1
+apiVersion: reviewapps.william.nu/v1alpha1
 kind: PullRequest
 metadata:
   labels:

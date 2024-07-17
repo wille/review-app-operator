@@ -3,7 +3,7 @@ package utils
 import (
 	"strings"
 
-	. "github.com/wille/rac/api/v1alpha1"
+	. "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 // IsSameImageRepo checks if two image names and tags are from the same repository

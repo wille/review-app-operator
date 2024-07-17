@@ -35,11 +35,11 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	racwilliamnuv1alpha1 "github.com/wille/rac/api/v1alpha1"
-	"github.com/wille/rac/internal/controller"
-	"github.com/wille/rac/internal/downscaler"
-	"github.com/wille/rac/internal/forwarder"
-	webhooks "github.com/wille/rac/internal/webhook"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/controller"
+	"github.com/wille/review-app-operator/internal/downscaler"
+	"github.com/wille/review-app-operator/internal/forwarder"
+	webhooks "github.com/wille/review-app-operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -51,7 +51,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(racwilliamnuv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(reviewapps.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -109,7 +109,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "80807133.rac.william.nu",
+		LeaderElectionID:       "80807133.reviewapps.william.nu",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

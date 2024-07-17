@@ -2,7 +2,7 @@
 
 # Review App Operator
 
-A Kubernetes operator for creating staging/preview environments for pull requests.
+A Kubernetes operator for creating staging/preview environments for pull requests, aimed towards web applications and APIs, but can be used to deploy a staging instance of any containerized application.
 
 It's intended to be the most simple solution to have fully functional dynamic staging review environments for pull requests and to not waste computing resources by automatically stopping environments that are not used and starting them again on demand.
 
@@ -66,7 +66,7 @@ The `ReviewApp` is similar to a `Deployment` but with extra fields to select whi
 ### `my-review-app.yml`
 
 ```yaml
-apiVersion: rac.william.nu/v1alpha1
+apiVersion: reviewapps.william.nu/v1alpha1
 kind: ReviewApp
 metadata:
   name: my-review-app
@@ -96,7 +96,7 @@ Create this ReviewApp
 `kubectl apply -f my-review-app.yml`
 
 > [!NOTE]
-> See the [ReviewApp sample](/config/samples/rac.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
+> See the [ReviewApp sample](/config/samples/reviewapps.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
 >
 > Hostnames can be templated with `{{.ReviewApp}}`, `{{.BranchName}}`, `{{.DeploymentName}}`
 
@@ -106,7 +106,7 @@ Create this ReviewApp
 > Pull requests should not have to be created manually, the [Review App Action](https://github.com/wille/review-app-action) will do it for you. This is included to show how it works behind the scenes.
 
 ```yaml
-apiVersion: rac.william.nu/v1alpha1
+apiVersion: reviewapps.william.nu/v1alpha1
 kind: PullRequest
 metadata:
   name: my-pull-request

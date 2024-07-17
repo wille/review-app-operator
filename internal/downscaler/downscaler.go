@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wille/rac/internal/utils"
+	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 

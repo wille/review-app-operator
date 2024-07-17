@@ -41,7 +41,7 @@ rules:
   verbs:
   - get
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - pullrequests
   verbs:
@@ -52,13 +52,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - pullrequests/finalizers
   verbs:
   - update
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - pullrequests/status
   verbs:
@@ -66,7 +66,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - reviewapps
   verbs:
@@ -78,13 +78,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - reviewapps/finalizers
   verbs:
   - update
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - reviewapps/status
   verbs:

@@ -1,4 +1,4 @@
-module github.com/wille/rac
+module github.com/wille/review-app-operator
 
 go 1.22.0
 

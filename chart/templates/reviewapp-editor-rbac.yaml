@@ -6,7 +6,7 @@ metadata:
   {{- include "chart.labels" . | nindent 4 }}
 rules:
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - reviewapps
   verbs:
@@ -18,7 +18,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - rac.william.nu
+  - reviewapps.william.nu
   resources:
   - reviewapps/status
   verbs:
