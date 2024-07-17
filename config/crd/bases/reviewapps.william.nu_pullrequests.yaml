@@ -36,6 +36,20 @@ spec:
                 type: string
             type: object
           status:
+            properties:
+              deployedAt:
+                type: string
+              deployedBy:
+                type: string
+              pullRequestUrl:
+                type: string
+              repositoryUrl:
+                type: string
+            required:
+            - deployedAt
+            - deployedBy
+            - pullRequestUrl
+            - repositoryUrl
             type: object
         type: object
     served: true

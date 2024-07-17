@@ -1,4 +1,4 @@
-package webhooks
+package webhook
 
 import (
 	"context"
@@ -11,18 +11,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
-
-	reviewappsv1alpha1v1alpha1 "github.com/wille/review-app-operator/api/v1alpha1"
-	"github.com/wille/review-app-operator/internal/reviewapp"
-	"github.com/wille/review-app-operator/internal/utils"
-
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/utils"
 )
 
 var log = ctrl.Log.WithName("webhooks")
@@ -51,7 +48,7 @@ type WebhookBody struct {
 	// Only used on DELETE hooks
 	Merged bool `json:"merged"`
 
-	// Sender is the Github user who initiated the action
+	// Sender is the URL to the Github user who initiated the action
 	Sender string `json:"sender"`
 }
 
@@ -70,10 +67,21 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 	wh.webhookSecret = secret
 
 	handler := http.NewServeMux()
+	handler.Handle("/v1", wh)
 
-	handler.Handle("/v1", http.HandlerFunc(wh.ServeHTTP))
+	srv := http.Server{Addr: wh.Addr, Handler: handler}
 
-	return http.ListenAndServe(wh.Addr, handler)
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutting down forwarding proxy")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	// TODO will error when closed
+	return srv.ListenAndServe()
 }
 
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
@@ -99,6 +107,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 
+	w.Header().Set("Accept", "application/json")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
@@ -119,10 +128,8 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reviewappsv1alpha1v1alpha1.AddToScheme(scheme.Scheme)
-	c, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme.Scheme})
-	reviewApp := reviewappsv1alpha1v1alpha1.ReviewApp{}
-	if err := c.Get(context.TODO(), types.NamespacedName{
+	reviewApp := reviewapps.ReviewApp{}
+	if err := wh.Client.Get(context.TODO(), types.NamespacedName{
 		Name:      webhook.ReviewAppName,
 		Namespace: webhook.ReviewAppNamespace,
 	}, &reviewApp); err != nil {
@@ -140,14 +147,16 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
 
+	name := types.NamespacedName{
+		Name:      utils.GetResourceName(reviewApp.Name, webhook.BranchName),
+		Namespace: reviewApp.Namespace,
+	}
+
 	switch r.Method {
 	case http.MethodDelete:
 		log.Info("Delete webhook received", "name", pullRequestResourceName)
 
-		if err := reviewapp.DeletePullRequestByName(types.NamespacedName{
-			Name:      pullRequestResourceName,
-			Namespace: reviewApp.Namespace,
-		}); err != nil {
+		if err := deletePullRequestByName(wh.Client, name); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Info("Pull request not found", "name", pullRequestResourceName)
 				http.Error(w, "Pull request not found", http.StatusNotFound)
@@ -165,15 +174,14 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		log.Info("Create webhook received", "webhook", webhook)
 
-		pr, err := reviewapp.CreateOrUpdatePullRequest(&reviewApp, types.NamespacedName{
-			Name:      pullRequestResourceName,
-			Namespace: reviewApp.Namespace,
-		}, reviewappsv1alpha1v1alpha1.PullRequestSpec{
-			ReviewAppRef: reviewApp.Name,
-			ImageName:    webhook.Image,
-			BranchName:   webhook.BranchName,
-			// TODO set events and statuses
-		}, w)
+		pr, err := createOrUpdatePullRequest(
+			r.Context(),
+			wh.Client,
+			&reviewApp,
+			name,
+			webhook,
+			w,
+		)
 		if err != nil {
 			log.Error(err, "Error creating pull request", "name", pullRequestResourceName)
 			http.Error(w, "Error creating pull request", http.StatusInternalServerError)

@@ -38,8 +38,10 @@ type PullRequestSpec struct {
 
 // PullRequestStatus defines the observed state of PullRequest
 type PullRequestStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	DeployedAt     string `json:"deployedAt"`
+	DeployedBy     string `json:"deployedBy"`
+	RepositoryURL  string `json:"repositoryUrl"`
+	PullRequestURL string `json:"pullRequestUrl"`
 }
 
 // +kubebuilder:object:root=true
