@@ -152,7 +152,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080"}); err != nil {
+	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		setupLog.Error(err, "env WEBHOOK_SECRET not set")
+		os.Exit(1)
+	}
+
+	if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080", WebhookSecret: webhookSecret}); err != nil {
 		setupLog.Error(err, "unable to create pull request webhook server")
 		os.Exit(1)
 	}

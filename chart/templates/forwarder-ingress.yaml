@@ -10,7 +10,7 @@ spec:
   {{- if .Values.forwarder.ingress.tls }}
   tls:
   - hosts: {{ toYaml .Values.forwarder.ingress.hosts | nindent 4 }}
-    secretName: {{ include "chart.fullname" . }}-forwarder-secret
+    secretName: {{ include "chart.fullname" . }}-forwarder-tls
   {{- end }}
   rules:
   {{- range .Values.forwarder.ingress.hosts }}

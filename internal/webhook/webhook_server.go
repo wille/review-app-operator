@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -56,16 +55,10 @@ type WebhookServer struct {
 	Addr string
 	client.Client
 
-	webhookSecret string
+	WebhookSecret string
 }
 
 func (wh WebhookServer) Start(ctx context.Context) error {
-	secret := os.Getenv("WEBHOOK_SECRET")
-	if secret == "" {
-		return fmt.Errorf("WEBHOOK_SECRET is not set!")
-	}
-	wh.webhookSecret = secret
-
 	handler := http.NewServeMux()
 	handler.Handle("/v1", wh)
 
@@ -87,7 +80,7 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
 
-	_hmac := hmac.New(sha256.New, []byte(wh.webhookSecret))
+	_hmac := hmac.New(sha256.New, []byte(wh.WebhookSecret))
 
 	if _, err := _hmac.Write(body); err != nil {
 		return err

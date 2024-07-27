@@ -1,5 +1,8 @@
 webhook:
-  secret: ""
+  # The secret will be created if it does not exist
+  secretKeyRef:
+    name: webhook-secret
+    key: webhook-secret
   ingress:
     annotations: {}
     # cert-manager.io/cluster-issuer: letsencrypt
@@ -18,15 +21,7 @@ forwarder:
 scaleDownAfter: 1h
 controllerManager:
   manager:
-    args:
-      - --leader-elect
-      - --health-probe-bind-address=:8081
-    containerSecurityContext:
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop:
-          - ALL
-    image: willeam/review-app-operator
+    image: ghcr.io/wille/review-app-operator
     resources:
       limits:
         cpu: 500m
