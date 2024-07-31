@@ -5,9 +5,10 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-  {{ toYaml .Values.webhook.ingress.annotations | nindent 4 }}
+  {{- toYaml .Values.webhook.ingress.annotations | nindent 4 }}
 spec:
-  {{- if .Values.forwarder.ingress.tls }}
+  ingressClassName: {{ .Values.webhook.ingress.ingressClassName }}
+  {{- if .Values.webhook.ingress.tls }}
   tls:
   - hosts:
     - '{{ .Values.webhook.ingress.host }}'

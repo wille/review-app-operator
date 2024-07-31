@@ -207,6 +207,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Review App URL: " + deploymentUrl))
 		return
 	default:
+		w.Header().Set("Allow", "POST, DELETE")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

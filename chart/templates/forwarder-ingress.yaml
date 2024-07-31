@@ -5,8 +5,9 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-  {{- toYaml .Values.webhook.ingress.annotations | nindent 4 }}
+  {{- toYaml .Values.forwarder.ingress.annotations | nindent 4 }}
 spec:
+  ingressClassName: {{ .Values.forwarder.ingress.ingressClassName }}
   {{- if .Values.forwarder.ingress.tls }}
   tls:
   - hosts: {{ toYaml .Values.forwarder.ingress.hosts | nindent 4 }}
@@ -24,7 +25,7 @@ spec:
               number: 6969
         path: /
         pathType: Prefix
-  {{- end}}
+  {{- end }}
 
 ---
 

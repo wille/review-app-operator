@@ -4,12 +4,14 @@ webhook:
     name: webhook-secret
     key: webhook-secret
   ingress:
+    ingressClassName: ""
     annotations: {}
     # cert-manager.io/cluster-issuer: letsencrypt
     tls: false
     host: "" # review-app-webhooks.example.com
 forwarder:
   ingress:
+    ingressClassName: ""
     annotations: {}
     # cert-manager.io/cluster-issuer: letsencrypt
     tls: false
