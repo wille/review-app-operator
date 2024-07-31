@@ -93,18 +93,24 @@ rules:
   - get
   - patch
   - update
+
+{{ $fullname := include "chart.fullname" . }}
+{{ $labels := include "chart.labels" . }}
+{{- range $namespace := .Values.namespaces -}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: {{ include "chart.fullname" . }}-manager-rolebinding
+  name: {{ $fullname }}-manager-rolebinding
+  namespace: {{ $namespace }}
   labels:
-  {{- include "chart.labels" . | nindent 4 }}
+  {{- $labels | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: '{{ include "chart.fullname" . }}-manager-role'
+  name: {{ $fullname }}-manager-role
 subjects:
 - kind: ServiceAccount
-  name: '{{ include "chart.fullname" . }}-controller-manager'
-  namespace: '{{ .Release.Namespace }}'
+  name: {{ $fullname }}-controller-manager
+  namespace: {{ $.Release.Namespace }}
+{{- end }}

@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -30,6 +31,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -99,6 +101,20 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
+	cacheOpts := cache.Options{
+		DefaultNamespaces: map[string]cache.Config{},
+	}
+
+	if nss := os.Getenv("ENABLED_NAMESPACES"); nss != "" {
+		for _, ns := range strings.Split(nss, ",") {
+			cacheOpts.DefaultNamespaces[ns] = cache.Config{}
+		}
+		setupLog.Info("Enabled namespaces", "namespaces", nss)
+	} else {
+		setupLog.Info("ENABLED_NAMESPACES not set")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
@@ -121,6 +137,7 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+		Cache: cacheOpts,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

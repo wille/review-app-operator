@@ -33,6 +33,8 @@ spec:
               key: {{ .Values.webhook.secretKeyRef.key }}
         - name: SCALE_DOWN_AFTER
           value: {{ .Values.scaleDownAfter }}
+        - name: ENABLED_NAMESPACES
+          value: {{ join "," .Values.namespaces }}
         image: {{ .Values.controllerManager.manager.image }}
         livenessProbe:
           httpGet:

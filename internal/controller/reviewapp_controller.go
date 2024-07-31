@@ -59,7 +59,7 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
 		if !controllerutil.ContainsFinalizer(reviewApp, finalizerName) {
-			log.Info("Adding Finalizer for the CronJob", "reviewapp", req.NamespacedName)
+			log.Info("Adding Finalizer for the ReviewApp", "reviewapp", req.NamespacedName)
 			controllerutil.AddFinalizer(reviewApp, finalizerName)
 			if err := r.Update(ctx, reviewApp); err != nil {
 				return ctrl.Result{}, err

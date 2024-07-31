@@ -19,6 +19,8 @@ forwarder:
       # - "*.review-apps.example.com"
       - ""
 scaleDownAfter: 1h
+namespaces:
+  - review-apps
 controllerManager:
   manager:
     image: ghcr.io/wille/review-app-operator
