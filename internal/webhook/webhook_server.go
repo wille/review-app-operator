@@ -193,6 +193,9 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		deploymentUrl = "https://" + deploymentUrl
+		log.Info("Review App URL", "url", deploymentUrl)
+
 		// Only return the "primary" host URL for now.
 		// If you have multiple hostnames for a deployment, like when a container
 		// is serving multiple websites and you need to rely on the Host header,
