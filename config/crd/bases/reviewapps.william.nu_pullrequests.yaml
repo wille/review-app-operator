@@ -38,6 +38,7 @@ spec:
           status:
             properties:
               deployedAt:
+                format: date-time
                 type: string
               deployedBy:
                 type: string

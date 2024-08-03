@@ -145,9 +145,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 		objectMeta := metav1.ObjectMeta{
-			Name:      deploymentName,
-			Labels:    desiredLabels,
-			Namespace: reviewApp.Namespace,
+			Name:        deploymentName,
+			Labels:      desiredLabels,
+			Namespace:   reviewApp.Namespace,
+			Annotations: make(map[string]string),
 		}
 
 		// Merge pod template labels with the ReviewApp labels
@@ -209,7 +210,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			desiredDeployment.Spec.Replicas = &replicas
 
 			// Set the "last request" time so the downscaler can process it
-			desiredDeployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = strconv.Itoa(int(time.Now().Unix()))
+			desiredDeployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = time.Now().Format(time.RFC3339)
 
 			if err := r.Create(ctx, desiredDeployment); err != nil {
 				return ctrl.Result{}, err

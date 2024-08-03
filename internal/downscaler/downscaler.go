@@ -3,7 +3,6 @@ package downscaler
 import (
 	"context"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -33,13 +32,9 @@ func (ds Downscaler) NeedLeaderElection() bool {
 func (ds Downscaler) Start(ctx context.Context) error {
 	scaleDownAfter := os.Getenv("SCALE_DOWN_AFTER")
 
-	if strings.ToLower(scaleDownAfter) == "Never" {
+	if strings.ToLower(scaleDownAfter) == "never" || scaleDownAfter == "" {
 		log.Info("downscaler disabled")
 		return nil
-	}
-
-	if scaleDownAfter == "" {
-		scaleDownAfter = "1h"
 	}
 
 	dur, err := time.ParseDuration(scaleDownAfter)
@@ -58,15 +53,15 @@ func (ds Downscaler) Start(ctx context.Context) error {
 			log.Info("Stopping downscaler")
 			return nil
 		case <-ticker.C:
-			ds.run(dur)
+			ds.run(dur, ctx)
 		}
 	}
 }
 
-func (ds Downscaler) run(dur time.Duration) {
+func (ds Downscaler) run(dur time.Duration, ctx context.Context) {
 	// List all deployments owned by the Review App Operator
 	var list appsv1.DeploymentList
-	if err := ds.Client.List(context.Background(), &list, utils.MatchingLabels); err != nil {
+	if err := ds.Client.List(ctx, &list, utils.MatchingLabels); err != nil {
 		log.Error(err, "Failed to list deployments")
 		return
 	}
@@ -84,21 +79,18 @@ func (ds Downscaler) run(dur time.Duration) {
 			continue
 		}
 
-		timestamp, err := strconv.Atoi(d)
+		timestamp, err := time.Parse(time.RFC3339, d)
 		if err != nil {
 			continue
 		}
 
-		lastRequest := time.Unix(int64(timestamp), 0)
-		treshold := lastRequest.Add(dur)
-
 		// If the latest request was more than TimeoutSeconds ago, scale down the deployment
-		if treshold.Before(time.Now()) {
+		if timestamp.Add(dur).Before(time.Now()) {
 			var replicas int32 = 0
 			deployment.Spec.Replicas = &replicas
 
 			// TODO Add event to the deployment
-			if err := ds.Client.Update(context.Background(), &deployment); err != nil {
+			if err := ds.Client.Update(ctx, &deployment); err != nil {
 				log.Error(err, "Failed to downscale deployment", "deployment", deployment.Name)
 				continue
 			}

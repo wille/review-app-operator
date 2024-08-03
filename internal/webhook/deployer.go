@@ -51,7 +51,7 @@ func createOrUpdatePullRequest(
 		},
 		Status: PullRequestStatus{
 			DeployedBy:     webhook.Sender,
-			DeployedAt:     time.Now().Format(time.RFC3339),
+			DeployedAt:     metav1.Now(),
 			RepositoryURL:  webhook.RepositoryURL,
 			PullRequestURL: webhook.PullRequestURL,
 		},

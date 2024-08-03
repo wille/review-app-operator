@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -108,20 +107,22 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var replicas int32 = 1
 		deployment.Spec.Replicas = &replicas
 
-		log.Info("Scaling up deployment", "name", deployment.Name)
+		log.Info("Scaling up")
 		doUpdate = true
 	}
 
-	// Update the deployment's last request annotation only if it has changed to avoid excessive requests
-	timestamp := strconv.Itoa(int(time.Now().Unix()))
-	if timestamp != deployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] {
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Update the deployment's last request annotation once a minute avoid excessive patch requests
+	currentTimestamp, err := time.Parse(time.RFC3339, deployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation])
+	if err != nil || currentTimestamp.Add(time.Minute).Before(time.Now()) {
 		deployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = timestamp
 		doUpdate = true
 	}
 
 	if doUpdate {
-		if err := c.Patch(context.Background(), &deployment, patch); err != nil {
-			fmt.Println("Error updating deployment:", err)
+		if err := c.Patch(r.Context(), &deployment, patch); err != nil {
+			log.Error(err, "Error updating deployment")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
