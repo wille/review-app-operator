@@ -145,23 +145,17 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 		objectMeta := metav1.ObjectMeta{
-			Name:        deploymentName,
-			Labels:      desiredLabels,
-			Annotations: reviewApp.Annotations,
-			Namespace:   reviewApp.Namespace,
+			Name:      deploymentName,
+			Labels:    desiredLabels,
+			Namespace: reviewApp.Namespace,
 		}
 
-		// Merge pod template labels and annotations with the ReviewApp labels and annotations
+		// Merge pod template labels with the ReviewApp labels
 		podTemplate := deploymentSpec.Template.DeepCopy()
 		if podTemplate.ObjectMeta.Labels == nil {
 			podTemplate.ObjectMeta.Labels = make(map[string]string)
 		}
 		maps.Copy(podTemplate.ObjectMeta.Labels, objectMeta.Labels)
-
-		if podTemplate.ObjectMeta.Annotations == nil {
-			podTemplate.ObjectMeta.Annotations = make(map[string]string)
-		}
-		maps.Copy(podTemplate.ObjectMeta.Annotations, objectMeta.Annotations)
 
 		desiredDeployment := &appsv1.Deployment{
 			ObjectMeta: *objectMeta.DeepCopy(),
@@ -178,18 +172,16 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		enc, err := json.Marshal(hostnames)
+		hostnameAnnotationValue, err := json.Marshal(hostnames)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 
 		// Annotate the deployment with the hostnames for this pull request.
 		// The forwarder will target this deployment and keep track of requests
-		desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
+		desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
 
 		// Update the target container image with the latest PR image if any is set on the PullRequest
-
-		// container.Image will always be bitrefill/dashboard:latest
 		if pr.Spec.ImageName != "" {
 			for i := 0; i < len(desiredDeployment.Spec.Template.Spec.Containers); i++ {
 				container := &desiredDeployment.Spec.Template.Spec.Containers[i]
@@ -225,21 +217,25 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			log.Info("Deployment created", "deploymentName", deploymentName)
 		} else {
-
-			// Deployment labels or spec differs from desired spec
+			// If the deployment spec in the ReviewApp gets updated we do not update the deployment
+			// The deployment has to be manually deleted.
+			// TODO patch image change
 			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec.Template, runningDeployment.Spec.Template) ||
-				!equality.Semantic.DeepEqual(desiredLabels, runningDeployment.ObjectMeta.Labels) ||
-				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] != desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] {
+				!equality.Semantic.DeepDerivative(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) ||
+				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] !=
+					desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] {
 
 				patch := client.MergeFrom(runningDeployment.DeepCopy())
 
 				runningDeployment.ObjectMeta.Labels = desiredLabels
 				runningDeployment.Spec.Template = desiredDeployment.Spec.Template
-				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(enc)
+				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
 
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 					return ctrl.Result{}, err
 				}
+
+				log.Info("Deployment updated", "deploymentName", deploymentName)
 			}
 		}
 
@@ -267,7 +263,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
-			// Service for deployment not found, create it
 			if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -280,13 +275,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		} else {
 			// Service labels or spec differs from desired spec
 			if !equality.Semantic.DeepDerivative(desiredSvc.Spec, activeSvc.Spec) ||
-				!equality.Semantic.DeepEqual(desiredSvc.ObjectMeta.Labels, activeSvc.ObjectMeta.Labels) ||
-				!equality.Semantic.DeepEqual(desiredSvc.ObjectMeta.Annotations, activeSvc.ObjectMeta.Annotations) {
+				!equality.Semantic.DeepDerivative(desiredSvc.ObjectMeta.Labels, activeSvc.ObjectMeta.Labels) {
 				patch := client.MergeFrom(activeSvc.DeepCopy())
 
 				activeSvc.ObjectMeta.Labels = desiredSvc.ObjectMeta.Labels
 				activeSvc.Spec = desiredSvc.Spec
-				activeSvc.ObjectMeta.Annotations = desiredSvc.ObjectMeta.Annotations
 
 				if err := r.Patch(ctx, &activeSvc, patch); err != nil {
 					return ctrl.Result{}, err
