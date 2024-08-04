@@ -8,11 +8,12 @@ It's intended to be the most simple solution to have fully functional dynamic st
 
 Use the [Review App Action](https://github.com/wille/review-app-action) to keep deployments in sync with Pull Requests.
 
-The Review App Operator consists of two main components:
+The Review App Operator consists of four components:
 
 - **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
 - **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand
 - **Downscaler**: Watches pull request deployments and downscales if no traffic is received after `scaleDownAfter` (default 1h)
+- **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with [`wille/review-app-action`](https://github.com/wille/review-app-action)
 
 ## Installation
 
@@ -103,7 +104,7 @@ Create this ReviewApp
 ## PullRequest example
 
 > [!IMPORTANT]
-> Pull requests should not have to be created manually, the [Review App Action](https://github.com/wille/review-app-action) will do it for you. This is included to show how it works behind the scenes.
+> Pull requests are created and deleted automatically by the [Review App Action](https://github.com/wille/review-app-action) that runs your Github Actions `pull_request` workflows
 
 ```yaml
 apiVersion: reviewapps.william.nu/v1alpha1

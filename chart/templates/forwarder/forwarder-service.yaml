@@ -1,0 +1,14 @@
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "chart.fullname" . }}-forwarder
+spec:
+  type: ClusterIP
+  selector:
+    control-plane: forwarder
+    {{- include "chart.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: forwarder
+      port: 6969
+      targetPort: 6969

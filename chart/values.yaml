@@ -1,15 +1,42 @@
+# Scale down deployments that has not been accessed for some time
+scaleDownAfter: 1h
+# scaleDownAfter: Never
+
+# The active namespaces
+namespaces:
+  - review-apps
+
+image: ghcr.io/wille/review-app-operator
+
 webhook:
-  # The secret will be created if it does not exist
+  replicas: 1
+
+  # The webhook secret that will be used by the CI to trigger pull request events
+  # The secret will be created if it does not exist.
   secretKeyRef:
     name: webhook-secret
     key: webhook-secret
   ingress:
     ingressClassName: ""
     annotations: {}
+    # Enable cert-manager
     # cert-manager.io/cluster-issuer: letsencrypt
+    # tls: true
     tls: false
-    host: "" # review-app-webhooks.example.com
+
+    # The host for the webhook
+    # review-app-webhooks.example.com
+    host: ""
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
 forwarder:
+  replicas: 1
   ingress:
     ingressClassName: ""
     annotations: {}
@@ -20,21 +47,25 @@ forwarder:
       # is used to route requests to the forwarder.
       # - "*.review-apps.example.com"
       - ""
-scaleDownAfter: 1h
-namespaces:
-  - review-apps
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
 controllerManager:
-  manager:
-    image: ghcr.io/wille/review-app-operator
-    resources:
-      limits:
-        cpu: 500m
-        memory: 128Mi
-      requests:
-        cpu: 10m
-        memory: 64Mi
   replicas: 1
-  serviceAccount:
-    annotations: {}
-  type: ClusterIP
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+serviceAccount:
+  annotations: {}
+
 kubernetesClusterDomain: cluster.local

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -343,6 +342,20 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&reviewapps.PullRequest{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		// Watch for changes to ReviewApp resources
+		Watches(
+			&reviewapps.ReviewApp{},
+			handler.EnqueueRequestsFromMapFunc(r.findPullRequestsForReviewApp),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
+		Complete(r)
+}
+
+func SetupHostIndex(mgr ctrl.Manager) error {
 	// Index deployments by the hosts annotation to query them in the forwarder
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &appsv1.Deployment{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
 		svc := rawObj.(*appsv1.Deployment)
@@ -361,17 +374,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&reviewapps.PullRequest{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		// Watch for changes to ReviewApp resources
-		Watches(
-			&reviewapps.ReviewApp{},
-			handler.EnqueueRequestsFromMapFunc(r.findPullRequestsForReviewApp),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Complete(r)
+	return nil
 }
 
 // findPullRequestsForReviewApp returns a list of PullRequest resources that reference the given ReviewApp

@@ -1,26 +1,12 @@
-/*
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -58,11 +44,35 @@ func init() {
 }
 
 func main() {
+	var enableForwarder bool
+	var enableDeployWebhook bool
+	var enableController bool
+
+	var scaleDownAfter time.Duration
+	flag.DurationVar(&scaleDownAfter, "scale-down-after", time.Duration(time.Hour), "Scale down deployments that has not been accessed for some time")
+
 	var metricsAddr string
-	var enableLeaderElection bool
 	var probeAddr string
+	var enableLeaderElection bool
 	var secureMetrics bool
 	var enableHTTP2 bool
+	flag.BoolVar(&enableForwarder, "forwarder", false, "Enable the forwarding proxy")
+	flag.BoolVar(&enableDeployWebhook, "webhook", false, "Enable the deployment webhook")
+	flag.BoolVar(&enableController, "controller", false, "Enable the controller webhook")
+
+	cacheOpts := cache.Options{
+		DefaultNamespaces: map[string]cache.Config{},
+	}
+	flag.Func("namespaces", "Namespaces", func(ns string) error {
+		if ns == "" {
+			return errors.New("No namespaces set")
+		}
+		for _, ns := range strings.Split(ns, ",") {
+			cacheOpts.DefaultNamespaces[ns] = cache.Config{}
+		}
+		return nil
+	})
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metric endpoint binds to. "+
 		"Use the port :8080. If not set, it will be 0 in order to disable the metrics server")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -101,20 +111,6 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	cacheOpts := cache.Options{
-		DefaultNamespaces: map[string]cache.Config{},
-	}
-
-	if nss := os.Getenv("ENABLED_NAMESPACES"); nss != "" {
-		for _, ns := range strings.Split(nss, ",") {
-			cacheOpts.DefaultNamespaces[ns] = cache.Config{}
-		}
-		setupLog.Info("Enabled namespaces", "namespaces", nss)
-	} else {
-		setupLog.Info("ENABLED_NAMESPACES not set")
-		os.Exit(1)
-	}
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
@@ -124,8 +120,10 @@ func main() {
 		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "80807133.reviewapps.william.nu",
+
+		// Only the controller-manager needs leader election
+		LeaderElection:   enableController && enableLeaderElection,
+		LeaderElectionID: "80807133.reviewapps.william.nu",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -144,21 +142,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.ReviewAppReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ReviewApp")
-		os.Exit(1)
+	if enableController || enableForwarder {
+		if err := controller.SetupHostIndex(mgr); err != nil {
+			setupLog.Error(err, "Failed to index host field")
+			os.Exit(1)
+		}
 	}
-	if err = (&controller.PullRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PullRequest")
-		os.Exit(1)
+
+	if enableController {
+		if err = (&controller.ReviewAppReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ReviewApp")
+			os.Exit(1)
+		}
+		if err = (&controller.PullRequestReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "PullRequest")
+			os.Exit(1)
+		}
+		// +kubebuilder:scaffold:builder
 	}
-	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
@@ -170,24 +177,30 @@ func main() {
 	}
 
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	if webhookSecret == "" {
+	if enableDeployWebhook && webhookSecret == "" {
 		setupLog.Error(err, "env WEBHOOK_SECRET not set")
 		os.Exit(1)
 	}
 
-	if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080", WebhookSecret: webhookSecret}); err != nil {
-		setupLog.Error(err, "unable to create pull request webhook server")
-		os.Exit(1)
+	if enableDeployWebhook {
+		if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080", WebhookSecret: webhookSecret}); err != nil {
+			setupLog.Error(err, "unable to create pull request webhook server")
+			os.Exit(1)
+		}
 	}
 
-	if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969"}); err != nil {
-		setupLog.Error(err, "unable to setup the forwarding proxy")
-		os.Exit(1)
+	if enableForwarder {
+		if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969"}); err != nil {
+			setupLog.Error(err, "unable to setup the forwarding proxy")
+			os.Exit(1)
+		}
 	}
 
-	if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient()}); err != nil {
-		setupLog.Error(err, "unable to create downscaler")
-		os.Exit(1)
+	if enableController {
+		if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient(), ScaleDownAfter: scaleDownAfter}); err != nil {
+			setupLog.Error(err, "unable to create downscaler")
+			os.Exit(1)
+		}
 	}
 
 	setupLog.Info("starting manager")

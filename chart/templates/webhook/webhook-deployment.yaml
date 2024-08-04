@@ -1,34 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "chart.fullname" . }}-controller-manager
+  name: {{ include "chart.fullname" . }}-webhook
   labels:
-    control-plane: controller-manager
+    control-plane: webhook
   {{- include "chart.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.controllerManager.replicas }}
+  replicas: {{ .Values.webhook.replicas }}
   selector:
     matchLabels:
-      control-plane: controller-manager
+      control-plane: webhook
     {{- include "chart.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        control-plane: controller-manager
+        control-plane: webhook
       {{- include "chart.selectorLabels" . | nindent 8 }}
     spec:
       containers:
       - args:
-        - --controller
-        - --leader-elect
-        - --health-probe-bind-address=:8081
-        - --scale-down-after={{ .Values.scaleDownAfter }}
+        - --webhook
         - --namespaces={{ join "," .Values.namespaces }}
+        - --health-probe-bind-address=:8081   
         command:
         - /manager
         env:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}
+        - name: WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.webhook.secretKeyRef.name }}
+              key: {{ .Values.webhook.secretKeyRef.key }}
         image: {{ .Values.image }}
         livenessProbe:
           httpGet:
@@ -43,7 +46,7 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        resources: {{- toYaml .Values.controllerManager.resources | nindent 10
+        resources: {{- toYaml .Values.webhook.resources | nindent 10
           }}
         securityContext:
           allowPrivilegeEscalation: false

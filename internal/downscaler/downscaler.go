@@ -2,8 +2,6 @@ package downscaler
 
 import (
 	"context"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/wille/review-app-operator/internal/utils"
@@ -19,6 +17,7 @@ var log = ctrl.Log.WithName("downscaler")
 // Downscaler watches deployments and scales them down if unused for some time
 type Downscaler struct {
 	client.Client
+	ScaleDownAfter time.Duration
 }
 
 var _ manager.LeaderElectionRunnable = &Downscaler{}
@@ -30,20 +29,7 @@ func (ds Downscaler) NeedLeaderElection() bool {
 
 // Starts the ticker to watch deployments
 func (ds Downscaler) Start(ctx context.Context) error {
-	scaleDownAfter := os.Getenv("SCALE_DOWN_AFTER")
-
-	if strings.ToLower(scaleDownAfter) == "never" || scaleDownAfter == "" {
-		log.Info("downscaler disabled")
-		return nil
-	}
-
-	dur, err := time.ParseDuration(scaleDownAfter)
-	if err != nil {
-		log.Error(err, "unable to parse SCALE_DOWN_AFTER")
-		return err
-	}
-
-	log.Info("starting downscaler", "scaleDownAfter", dur)
+	log.Info("starting downscaler", "scaleDownAfter", ds.ScaleDownAfter)
 
 	ticker := time.NewTicker(time.Second * 10)
 
@@ -53,7 +39,7 @@ func (ds Downscaler) Start(ctx context.Context) error {
 			log.Info("Stopping downscaler")
 			return nil
 		case <-ticker.C:
-			ds.run(dur, ctx)
+			ds.run(ds.ScaleDownAfter, ctx)
 		}
 	}
 }
