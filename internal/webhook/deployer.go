@@ -11,10 +11,7 @@ import (
 
 	"github.com/wille/review-app-operator/internal/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubectl/pkg/polymorphichelpers"
 
 	. "github.com/wille/review-app-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -134,19 +131,12 @@ func createOrUpdatePullRequest(
 				return nil, err
 			}
 
-			statusViewer := polymorphichelpers.DeploymentStatusViewer{}
+			status, done, err := utils.GetDeploymentStatus(&deployment)
 
-			obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&deployment)
 			if err != nil {
-				log.Error(err, "Error converting deployment to unstructured")
-				return &desiredPr, nil
+				return &desiredPr, err
 			}
 
-			status, done, err := statusViewer.Status(&unstructured.Unstructured{Object: obj}, 0)
-			if err != nil {
-				log.Error(err, "Error getting deployment status")
-				return &desiredPr, nil
-			}
 			if !done {
 				bothDone = false
 			}

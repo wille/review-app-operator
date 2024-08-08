@@ -48,8 +48,11 @@ func main() {
 	var enableDeployWebhook bool
 	var enableController bool
 
+	var connectionTimeout time.Duration
+	flag.DurationVar(&connectionTimeout, "connection-timeout", time.Second*10, "Timeout connecting to PR apps")
+
 	var scaleDownAfter time.Duration
-	flag.DurationVar(&scaleDownAfter, "scale-down-after", time.Duration(time.Hour), "Scale down deployments that has not been accessed for some time")
+	flag.DurationVar(&scaleDownAfter, "scale-down-after", time.Hour, "Scale down deployments that has not been accessed for some time")
 
 	var metricsAddr string
 	var probeAddr string
@@ -190,7 +193,7 @@ func main() {
 	}
 
 	if enableForwarder {
-		if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969"}); err != nil {
+		if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969", ConnectionTimeout: connectionTimeout}); err != nil {
 			setupLog.Error(err, "unable to setup the forwarding proxy")
 			os.Exit(1)
 		}

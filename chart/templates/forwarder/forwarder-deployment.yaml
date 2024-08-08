@@ -21,6 +21,7 @@ spec:
       - args:
         - --forwarder
         - --namespaces={{ join "," .Values.namespaces }}
+        - --connection-timeout={{ .Values.connectionTimeout }}
         - --health-probe-bind-address=:8081   
         command:
         - /manager

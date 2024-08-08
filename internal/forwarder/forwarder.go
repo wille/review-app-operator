@@ -20,11 +20,6 @@ import (
 
 var log = ctrl.Log.WithName("forwarder")
 
-const (
-	maxRetries        = 120
-	retryDelaySeconds = 1
-)
-
 // Hop-by-hop headers. These are removed when sent to the backend.
 // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
 var hopHeaders = []string{
@@ -62,12 +57,11 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 type Forwarder struct {
 	Addr string
 	client.Client
+	ConnectionTimeout time.Duration
 }
 
 func getClusterDomain() string {
-	env := os.Getenv("KUBERNETES_CLUSTER_DOMAIN")
-
-	if env != "" {
+	if env := os.Getenv("KUBERNETES_CLUSTER_DOMAIN"); env != "" {
 		return env
 	}
 
@@ -79,25 +73,30 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// List all deployments indexed by the host
 	var list appsv1.DeploymentList
-	if err := c.List(context.Background(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
+	if err := c.List(r.Context(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
 		panic(err)
 	}
 
+	log = ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String())
+
 	if len(list.Items) == 0 {
 		// No deployments indexed for this host found
-		fmt.Println("No deployment found for host", r.Host)
+		// TODO BETTER ERRORS
+		log.Error(nil, "No deployment found", "req", r.URL)
 		http.Error(w, fmt.Sprintf("No review app found for host %s", r.Host), http.StatusNotFound)
 		return
 	}
 
 	if len(list.Items) > 1 {
 		// More than one deployment indexed for this host found
-		fmt.Println("More than one deployment found for host", r.Host)
+		log.Error(nil, "More than one deployment found for host", "list", list)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	deployment := list.Items[0]
+
+	log = log.WithValues("deployment", deployment.Name)
 
 	doUpdate := false
 	patch := client.MergeFrom(deployment.DeepCopy())
@@ -132,45 +131,59 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// eg. review-app-1.default.svc.cluster.local:80
 	// Always uses port 80
 	port := 80
-	hostname := fmt.Sprintf("%s.%s.svc.%s:%d", deployment.Name, deployment.Namespace, getClusterDomain(), port)
+	serviceHostname := fmt.Sprintf("%s.%s.svc.%s:%d", deployment.Name, deployment.Namespace, getClusterDomain(), port)
 
-	retries := 0
+	// or := r.Clone(r.Context())
+
+	timeout, _ := context.WithTimeout(r.Context(), fwd.ConnectionTimeout)
+
+	//http: Request.RequestURI can't be set in client requests.
+	//http://golang.org/src/pkg/net/http/client.go
+	r.RequestURI = ""
+	r.URL.Scheme = "http"
+	r.URL.Host = serviceHostname
+	delHopHeaders(r.Header)
+
+	if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		appendHostToXForwardHeader(r.Header, clientIP)
+	}
+
+	// The label values are "normalized"
+	r.Header.Set("X-Branch", deployment.Labels["app.kubernetes.io/name"])
+	r.Header.Set("X-Review-App", deployment.Labels["app.kubernetes.io/part-of"])
+
+	attempt := 0
 
 	for {
 		select {
-		// Connection closed
+		// connectionTimeout
+		case <-timeout.Done():
+			status, _, _ := utils.GetDeploymentStatus(&deployment)
+			log.Info(fmt.Sprintf("Upstream timeout: %s", strings.Trim(status, "\n")))
+
+			// This page is sent when the Review App was not scaled up within the `connectionTimeout` limit.
+			// Later we can expand it to automatically read deployment status updates and automatically refresh.
+			http.Error(w, fmt.Sprintf("Timeout loading Review App, try reloading the page...\n\n%s", status), http.StatusAccepted)
+			return
+		// Client connection reset
 		case <-r.Context().Done():
+			log.Info("Connection reset")
 			return
 		default:
 		}
 		client := &http.Client{}
 
-		//http: Request.RequestURI can't be set in client requests.
-		//http://golang.org/src/pkg/net/http/client.go
-		r.RequestURI = ""
-		r.URL.Scheme = "http"
-		r.URL.Host = hostname
-
-		delHopHeaders(r.Header)
-
-		if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			appendHostToXForwardHeader(r.Header, clientIP)
-		}
-
 		resp, err := client.Do(r)
 		if err != nil {
-			if retries == 0 {
-				log.Error(err, "Error connecting to review app, retrying...", "hostname", hostname, "deployment", deployment.Name)
-			}
-			retries++
-			if retries > maxRetries {
-				log.Error(err, "Giving up connecting to review app", "hostname", hostname, "deployment", deployment.Name)
-				http.Error(w, "Connection error", http.StatusGatewayTimeout)
-				return
+			if attempt%5 == 0 {
+				status, _, _ := utils.GetDeploymentStatus(&deployment)
+				log.Info(fmt.Sprintf("Connection attempt: %s: %s", strings.Trim(status, "\n"), err.Error()))
 			}
 
+			attempt++
+
 			// Delay before trying again
-			time.Sleep(retryDelaySeconds * time.Second)
+			time.Sleep(time.Second)
 			continue
 		}
 		defer resp.Body.Close()
@@ -186,10 +199,9 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Info(fmt.Sprintf("%s %s %s %s %s->%s", r.RemoteAddr, r.Method, r.URL, resp.Status, r.Host, hostname))
+		log.WithValues("status", resp.Status).Info("Request finished")
 		break
 	}
-
 }
 
 func (fw Forwarder) Start(ctx context.Context) error {
