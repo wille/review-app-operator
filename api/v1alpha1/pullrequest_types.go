@@ -15,10 +15,11 @@ type PullRequestSpec struct {
 
 // PullRequestStatus defines the observed state of PullRequest
 type PullRequestStatus struct {
-	DeployedAt     metav1.Time `json:"deployedAt"`
-	DeployedBy     string      `json:"deployedBy"`
-	RepositoryURL  string      `json:"repositoryUrl"`
-	PullRequestURL string      `json:"pullRequestUrl"`
+	DeployedAt        metav1.Time `json:"deployedAt"`
+	DeployedBy        string      `json:"deployedBy"`
+	RepositoryURL     string      `json:"repositoryUrl"`
+	PullRequestURL    string      `json:"pullRequestUrl"`
+	PullRequestNumber int         `json:"pullRequestNumber"`
 }
 
 // +kubebuilder:object:root=true

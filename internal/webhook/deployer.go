@@ -47,10 +47,11 @@ func createOrUpdatePullRequest(
 			// TODO set events and statuses
 		},
 		Status: PullRequestStatus{
-			DeployedBy:     webhook.Sender,
-			DeployedAt:     metav1.Now(),
-			RepositoryURL:  webhook.RepositoryURL,
-			PullRequestURL: webhook.PullRequestURL,
+			DeployedBy:        webhook.Sender,
+			DeployedAt:        metav1.Now(),
+			RepositoryURL:     webhook.RepositoryURL,
+			PullRequestURL:    webhook.PullRequestURL,
+			PullRequestNumber: webhook.PullRequestNumber,
 		},
 	}
 

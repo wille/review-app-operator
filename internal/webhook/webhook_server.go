@@ -39,6 +39,8 @@ type WebhookBody struct {
 	// PullRequestURL is the URL to the pull request
 	PullRequestURL string `json:"pullRequestUrl"`
 
+	PullRequestNumber string `json:"pullRequestNumber"`
+
 	// Image is the image to deploy
 	// Only used on POST hooks
 	Image string `json:"image"`

@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	. "github.com/wille/review-app-operator/api/v1alpha1"
@@ -69,6 +70,7 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequ
 	s := strings.ReplaceAll(template, "{{.BranchName}}", normalize(pr.Spec.BranchName))
 	s = strings.ReplaceAll(s, "{{.ReviewApp}}", normalize(reviewApp.Name))
 	s = strings.ReplaceAll(s, "{{.DeploymentName}}", normalize(deploymentName))
+	s = strings.ReplaceAll(s, "{{.PullRequestNumber}}", strconv.Itoa(pr.Status.PullRequestNumber))
 
 	// Split template-x.review.example.com into template-x, review.example.com
 	// and ensure that it isn't too long

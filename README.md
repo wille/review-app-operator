@@ -99,7 +99,7 @@ Create this ReviewApp
 > [!NOTE]
 > See the [ReviewApp sample](/config/samples/reviewapps.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
 >
-> Hostnames can be templated with `{{.ReviewApp}}`, `{{.BranchName}}`, `{{.DeploymentName}}`
+> Hostnames can be templated with `{{.ReviewApp}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
 
 ## PullRequest example
 

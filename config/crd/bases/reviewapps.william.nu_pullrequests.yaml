@@ -42,6 +42,8 @@ spec:
                 type: string
               deployedBy:
                 type: string
+              pullRequestNumber:
+                type: integer
               pullRequestUrl:
                 type: string
               repositoryUrl:
@@ -49,6 +51,7 @@ spec:
             required:
             - deployedAt
             - deployedBy
+            - pullRequestNumber
             - pullRequestUrl
             - repositoryUrl
             type: object
