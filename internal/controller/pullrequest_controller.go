@@ -194,6 +194,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
+			updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+
 			// New deployments are downscaled by default.
 			// The problem with this approach is that the incoming deploy webhook
 			// will not be able to tell if the pod actually started and became healthy

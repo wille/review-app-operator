@@ -39,7 +39,7 @@ type WebhookBody struct {
 	// PullRequestURL is the URL to the pull request
 	PullRequestURL string `json:"pullRequestUrl"`
 
-	PullRequestNumber string `json:"pullRequestNumber"`
+	PullRequestNumber int `json:"pullRequestNumber"`
 
 	// Image is the image to deploy
 	// Only used on POST hooks
@@ -178,8 +178,8 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w,
 		)
 		if err != nil {
-			log.Error(err, "Error creating pull request", "name", pullRequestResourceName)
-			http.Error(w, "Error creating pull request", http.StatusInternalServerError)
+			log.Error(err, "Error deploying", "name", pullRequestResourceName)
+			http.Error(w, "Error deploying", http.StatusInternalServerError)
 			return
 		}
 
@@ -196,7 +196,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		deploymentUrl = "https://" + deploymentUrl
-		log.Info("Review App URL", "url", deploymentUrl)
+		log.Info("Successfully deployed", "url", deploymentUrl)
 
 		// Only return the "primary" host URL for now.
 		// If you have multiple hostnames for a deployment, like when a container

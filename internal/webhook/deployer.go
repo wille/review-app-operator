@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -108,7 +109,7 @@ func createOrUpdatePullRequest(
 
 	attempts := 0
 	for {
-		bothDone := true
+		finished := true
 
 		select {
 		case <-ctx.Done():
@@ -139,13 +140,14 @@ func createOrUpdatePullRequest(
 			}
 
 			if !done {
-				bothDone = false
+				finished = false
+				log.Info("Deployment in progress: " + status)
 			}
 
 			writeFlush(w, status)
 		}
 
-		if bothDone {
+		if finished {
 			break
 		}
 
@@ -156,7 +158,8 @@ func createOrUpdatePullRequest(
 		if attempts > 600 {
 			log.Info("Timeout waiting for deployments to be ready")
 			http.Error(w, "Timeout waiting for deployments to be ready", http.StatusRequestTimeout)
-			break
+
+			return nil, errors.New("Timeout waiting for deployments to be ready")
 		}
 
 		time.Sleep(1 * time.Second)
