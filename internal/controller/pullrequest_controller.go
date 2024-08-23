@@ -163,7 +163,10 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
-				Template: *podTemplate,
+				Template:                *podTemplate,
+				Strategy:                deploymentSpec.Strategy,
+				MinReadySeconds:         deploymentSpec.MinReadySeconds,
+				ProgressDeadlineSeconds: deploymentSpec.ProgressDeadlineSeconds,
 			},
 		}
 
@@ -181,17 +184,6 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// The forwarder will target this deployment and keep track of requests
 		desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
 
-		// Update the target container image with the latest PR image if any is set on the PullRequest
-		if pr.Spec.ImageName != "" {
-			for i := 0; i < len(desiredDeployment.Spec.Template.Spec.Containers); i++ {
-				container := &desiredDeployment.Spec.Template.Spec.Containers[i]
-				if deploymentSpec.TargetContainerName == container.Name {
-					container.Image = pr.Spec.ImageName
-					break
-				}
-			}
-		}
-
 		var runningDeployment appsv1.Deployment
 		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
 			if !apierrors.IsNotFound(err) {
@@ -205,7 +197,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			// New deployments are downscaled by default.
 			// The problem with this approach is that the incoming deploy webhook
 			// will not be able to tell if the pod actually started and became healthy
-			var replicas int32 = 0
+			// TODO
+			var replicas int32 = 1
 			desiredDeployment.Spec.Replicas = &replicas
 
 			// Set the "last request" time so the downscaler can process it
@@ -217,18 +210,26 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			log.Info("Deployment created", "deploymentName", deploymentName)
 		} else {
-			// If the deployment spec in the ReviewApp gets updated we do not update the deployment
-			// The deployment has to be manually deleted.
-			// TODO patch image change
-			if !equality.Semantic.DeepDerivative(desiredDeployment.Spec.Template, runningDeployment.Spec.Template) ||
-				!equality.Semantic.DeepDerivative(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) ||
-				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] !=
-					desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] {
+			patch := client.MergeFrom(runningDeployment.DeepCopy())
 
-				patch := client.MergeFrom(runningDeployment.DeepCopy())
+			// Update the target container image with the latest PR image if any is set on the PullRequest
+			updatedImage := false
+			if pr.Spec.ImageName != "" {
+				updatedImage = updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+
+				if updatedImage {
+					log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
+				}
+			}
+
+			// If the deployment spec in the ReviewApp gets updated we do not update the deployment
+			// The deployment needs to be manually deleted.
+			if updatedImage ||
+				desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] !=
+					runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] ||
+				!equality.Semantic.DeepDerivative(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) {
 
 				runningDeployment.ObjectMeta.Labels = desiredLabels
-				runningDeployment.Spec.Template = desiredDeployment.Spec.Template
 				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
 
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
@@ -291,6 +292,21 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func updateContainerImage(deploy *appsv1.Deployment, containerName, image string) bool {
+	for i := 0; i < len(deploy.Spec.Template.Spec.Containers); i++ {
+		container := &deploy.Spec.Template.Spec.Containers[i]
+		if container.Name == containerName {
+			isUpdated := container.Image != image
+
+			container.Image = image
+
+			return isUpdated
+		}
+	}
+
+	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.
