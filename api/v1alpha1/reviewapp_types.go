@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -31,6 +32,15 @@ type Deployments struct {
 
 	// generateEmbeddedObjectMeta must be set for this to work
 	Template corev1.PodTemplateSpec `json:"template"`
+
+	// +optional
+	Strategy appsv1.DeploymentStrategy `json:"strategy,omitempty"`
+
+	// +optional
+	MinReadySeconds int32 `json:"minReadySeconds,omitempty"`
+
+	// +optional
+	ProgressDeadlineSeconds *int32 `json:"progressDeadlineSeconds,omitempty"`
 }
 
 // ReviewAppSpec defines the desired state of ReviewApp

@@ -151,9 +151,9 @@ func createOrUpdatePullRequest(
 
 		attempts++
 
-		// TODO configuration option
-		//
-		if attempts > 120 {
+		// TODO configuration option or use DeploymentSpec.ProgressDeadlineSeconds
+		// The default value for ProgressDeadlineSeconds is 600
+		if attempts > 600 {
 			log.Info("Timeout waiting for deployments to be ready")
 			http.Error(w, "Timeout waiting for deployments to be ready", http.StatusRequestTimeout)
 			break
