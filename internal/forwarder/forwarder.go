@@ -135,7 +135,8 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// or := r.Clone(r.Context())
 
-	timeout, _ := context.WithTimeout(r.Context(), fwd.ConnectionTimeout)
+	timeout, cancel := context.WithTimeout(r.Context(), fwd.ConnectionTimeout)
+	defer cancel()
 
 	//http: Request.RequestURI can't be set in client requests.
 	//http://golang.org/src/pkg/net/http/client.go

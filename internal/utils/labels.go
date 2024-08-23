@@ -22,7 +22,7 @@ const HostAnnotation = "reviewapps.william.nu/hosts"
 const HostIndexFieldName = ".hosts"
 
 // GetSelectorLabels returns selector labels to be used with pod selectors in Services and Deployments
-func GetSelectorLabels(reviewApp *ReviewApp, pr PullRequest, deploymentName string) map[string]string {
+func GetSelectorLabels(reviewApp *ReviewAppConfig, pr PullRequest, deploymentName string) map[string]string {
 	instance := GetResourceName(reviewApp.Name, pr.Spec.BranchName)
 
 	if deploymentName != "" {
@@ -41,8 +41,8 @@ func GetSelectorLabels(reviewApp *ReviewApp, pr PullRequest, deploymentName stri
 	return labels
 }
 
-// GetResourceLabels returns the labels for all ReviewApp child resources with all user supplied labels included
-func GetResourceLabels(reviewApp *ReviewApp, pr PullRequest, deploymentName string) map[string]string {
+// GetResourceLabels returns the labels for all ReviewAppConfig child resources with all user supplied labels included
+func GetResourceLabels(reviewApp *ReviewAppConfig, pr PullRequest, deploymentName string) map[string]string {
 	labels := GetSelectorLabels(reviewApp, pr, deploymentName)
 	maps.Copy(labels, reviewApp.ObjectMeta.Labels)
 

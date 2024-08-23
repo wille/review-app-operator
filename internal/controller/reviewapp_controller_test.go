@@ -30,7 +30,7 @@ import (
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
-var _ = Describe("ReviewApp Controller", func() {
+var _ = Describe("ReviewAppConfig Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -40,13 +40,13 @@ var _ = Describe("ReviewApp Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		reviewapp := &reviewapps.ReviewApp{}
+		reviewapp := &reviewapps.ReviewAppConfig{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind ReviewApp")
+			By("creating the custom resource for the Kind ReviewAppConfig")
 			err := k8sClient.Get(ctx, typeNamespacedName, reviewapp)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &reviewapps.ReviewApp{
+				resource := &reviewapps.ReviewAppConfig{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,16 +59,16 @@ var _ = Describe("ReviewApp Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &reviewapps.ReviewApp{}
+			resource := &reviewapps.ReviewAppConfig{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance ReviewApp")
+			By("Cleanup the specific resource instance ReviewAppConfig")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &ReviewAppReconciler{
+			controllerReconciler := &ReviewAppConfigReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

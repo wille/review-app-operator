@@ -14,7 +14,7 @@ resources:
     controller: true
     domain: william.nu
     group: reviewapps.william.nu
-    kind: ReviewApp
+    kind: ReviewAppConfig
     path: github.com/wille/review-app-controller/api/v1alpha1
     version: v1alpha1
   - api:

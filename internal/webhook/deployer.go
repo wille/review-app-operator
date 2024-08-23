@@ -30,7 +30,7 @@ func writeFlush(w http.ResponseWriter, s string) {
 func createOrUpdatePullRequest(
 	ctx context.Context,
 	c client.Client,
-	reviewApp *ReviewApp,
+	reviewApp *ReviewAppConfig,
 	key types.NamespacedName,
 	webhook WebhookBody,
 	w http.ResponseWriter,
@@ -42,9 +42,9 @@ func createOrUpdatePullRequest(
 			Namespace: key.Namespace,
 		},
 		Spec: PullRequestSpec{
-			ReviewAppRef: reviewApp.Name,
-			ImageName:    webhook.Image,
-			BranchName:   webhook.BranchName,
+			ReviewAppConfigRef: reviewApp.Name,
+			ImageName:          webhook.Image,
+			BranchName:         webhook.BranchName,
 			// TODO set events and statuses
 		},
 		Status: PullRequestStatus{
@@ -58,7 +58,7 @@ func createOrUpdatePullRequest(
 
 	for _, deployment := range reviewApp.Spec.Deployments {
 		for _, container := range deployment.Template.Spec.Containers {
-			// The image repo and name defined in the ReviewApp must match the deployed image
+			// The image repo and name defined in the ReviewAppConfig must match the deployed image
 			if container.Name == deployment.TargetContainerName && !utils.IsSameImageRepo(container.Image, webhook.Image) {
 				err := fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", container.Image, webhook.Image)
 				log.Error(err, "The image repository is immutable", "name", key.Name)

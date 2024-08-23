@@ -43,13 +43,13 @@ type Deployments struct {
 	ProgressDeadlineSeconds *int32 `json:"progressDeadlineSeconds,omitempty"`
 }
 
-// ReviewAppSpec defines the desired state of ReviewApp
-type ReviewAppSpec struct {
+// ReviewAppConfigSpec defines the desired state of ReviewAppConfig
+type ReviewAppConfigSpec struct {
 	Deployments []Deployments `json:"deployments"`
 }
 
-// ReviewAppStatus defines the observed state of ReviewApp
-type ReviewAppStatus struct {
+// ReviewAppConfigStatus defines the observed state of ReviewAppConfig
+type ReviewAppConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -69,24 +69,24 @@ type ReviewAppStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=rapp
 
-// ReviewApp is the Schema for the reviewapps API
-type ReviewApp struct {
+// ReviewAppConfig is the Schema for the reviewapps API
+type ReviewAppConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ReviewAppSpec   `json:"spec,omitempty"`
-	Status ReviewAppStatus `json:"status,omitempty"`
+	Spec   ReviewAppConfigSpec   `json:"spec,omitempty"`
+	Status ReviewAppConfigStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ReviewAppList contains a list of ReviewApp
-type ReviewAppList struct {
+// ReviewAppConfigList contains a list of ReviewAppConfig
+type ReviewAppConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ReviewApp `json:"items"`
+	Items           []ReviewAppConfig `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ReviewApp{}, &ReviewAppList{})
+	SchemeBuilder.Register(&ReviewAppConfig{}, &ReviewAppConfigList{})
 }

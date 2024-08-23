@@ -68,7 +68,7 @@ rules:
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewapps
+  - reviewconfigs
   verbs:
   - create
   - delete
@@ -80,13 +80,13 @@ rules:
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewapps/finalizers
+  - reviewconfigs/finalizers
   verbs:
   - update
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewapps/status
+  - reviewconfigs/status
   verbs:
   - get
   - patch

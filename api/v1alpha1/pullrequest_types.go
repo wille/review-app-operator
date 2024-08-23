@@ -9,8 +9,8 @@ type PullRequestSpec struct {
 
 	BranchName string `json:"branchName,omitempty"`
 
-	// The parent ReviewApp
-	ReviewAppRef string `json:"reviewAppRef,omitempty"`
+	// The parent ReviewAppConfig
+	ReviewAppConfigRef string `json:"reviewAppRef,omitempty"`
 }
 
 // PullRequestStatus defines the observed state of PullRequest

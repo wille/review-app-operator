@@ -76,11 +76,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// The reviewApp referenced by the PullRequest
-	var reviewApp reviewapps.ReviewApp
-	if err := r.Get(ctx, types.NamespacedName{Name: pr.Spec.ReviewAppRef, Namespace: req.Namespace}, &reviewApp); err != nil {
+	var reviewApp reviewapps.ReviewAppConfig
+	if err := r.Get(ctx, types.NamespacedName{Name: pr.Spec.ReviewAppConfigRef, Namespace: req.Namespace}, &reviewApp); err != nil {
 		if apierrors.IsNotFound(err) {
-			// No ReviewApp for reviewAppRef found
-			log.Error(nil, "ReviewApp not found", "reviewAppRef", pr.Spec.ReviewAppRef)
+			// No ReviewAppConfig for reviewAppRef found
+			log.Error(nil, "ReviewAppConfig not found", "reviewAppRef", pr.Spec.ReviewAppConfigRef)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -116,7 +116,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
-			// This should not happen as the selector labels are derived from the PullRequest and ReviewApp but guard anyways against having stale deployments
+			// This should not happen as the selector labels are derived from the PullRequest and ReviewAppConfig but guard anyways against having stale deployments
 			if runningDeployment.ObjectMeta.Name == deploymentName &&
 				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.ObjectMeta.Labels) {
 				found = true
@@ -132,11 +132,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	// Loop all desired deployments in the ReviewApp spec
+	// Loop all desired deployments in the ReviewAppConfig spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
 
-		// Desired labels for all subresources, including all labels set on the ReviewApp
+		// Desired labels for all subresources, including all labels set on the ReviewAppConfig
 		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name)
 
 		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
@@ -150,7 +150,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Annotations: make(map[string]string),
 		}
 
-		// Merge pod template labels with the ReviewApp labels
+		// Merge pod template labels with the ReviewAppConfig labels
 		podTemplate := deploymentSpec.Template.DeepCopy()
 		if podTemplate.ObjectMeta.Labels == nil {
 			podTemplate.ObjectMeta.Labels = make(map[string]string)
@@ -194,7 +194,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 
-			updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 
 			// New deployments are downscaled by default.
 			// The problem with this approach is that the incoming deploy webhook
@@ -224,7 +224,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				}
 			}
 
-			// If the deployment spec in the ReviewApp gets updated we do not update the deployment
+			// If the deployment spec in the ReviewAppConfig gets updated we do not update the deployment
 			// The deployment needs to be manually deleted.
 			if updatedImage ||
 				desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] !=
@@ -352,10 +352,10 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Index PullRequest resources based on .spec.reviewAppRef
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, reviewAppRefField, func(rawObj client.Object) []string {
 		configDeployment := rawObj.(*reviewapps.PullRequest)
-		if configDeployment.Spec.ReviewAppRef == "" {
+		if configDeployment.Spec.ReviewAppConfigRef == "" {
 			return nil
 		}
-		return []string{configDeployment.Spec.ReviewAppRef}
+		return []string{configDeployment.Spec.ReviewAppConfigRef}
 	}); err != nil {
 		return err
 	}
@@ -364,10 +364,10 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&reviewapps.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// Watch for changes to ReviewApp resources
+		// Watch for changes to ReviewAppConfig resources
 		Watches(
-			&reviewapps.ReviewApp{},
-			handler.EnqueueRequestsFromMapFunc(r.findPullRequestsForReviewApp),
+			&reviewapps.ReviewAppConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findPullRequestsForReviewAppConfig),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Complete(r)
@@ -395,8 +395,8 @@ func SetupHostIndex(mgr ctrl.Manager) error {
 	return nil
 }
 
-// findPullRequestsForReviewApp returns a list of PullRequest resources that reference the given ReviewApp
-func (r *PullRequestReconciler) findPullRequestsForReviewApp(ctx context.Context, reviewApp client.Object) []reconcile.Request {
+// findPullRequestsForReviewAppConfig returns a list of PullRequest resources that reference the given ReviewAppConfig
+func (r *PullRequestReconciler) findPullRequestsForReviewAppConfig(ctx context.Context, reviewApp client.Object) []reconcile.Request {
 	var prs reviewapps.PullRequestList
 	err := r.List(ctx, &prs, &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(reviewAppRefField, reviewApp.GetName()),

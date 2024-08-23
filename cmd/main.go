@@ -153,11 +153,11 @@ func main() {
 	}
 
 	if enableController {
-		if err = (&controller.ReviewAppReconciler{
+		if err = (&controller.ReviewAppConfigReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "ReviewApp")
+			setupLog.Error(err, "unable to create controller", "controller", "ReviewAppConfig")
 			os.Exit(1)
 		}
 		if err = (&controller.PullRequestReconciler{

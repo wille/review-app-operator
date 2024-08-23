@@ -45,7 +45,7 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-# generateEmbeddedObjectMeta is set so ReviewApp.deployments[*].template works
+# generateEmbeddedObjectMeta is set so ReviewAppConfig.deployments[*].template works
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd:maxDescLen=0,generateEmbeddedObjectMeta=true webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate

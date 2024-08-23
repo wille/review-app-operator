@@ -52,7 +52,7 @@ var _ = Describe("PullRequest Controller", func() {
 						Namespace: "default",
 					},
 					Spec: reviewapps.PullRequestSpec{
-						ReviewAppRef: "test-reviewapp",
+						ReviewAppConfigRef: "test-reviewapp",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

@@ -30,20 +30,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// ReviewAppReconciler reconciles a ReviewApp object
-type ReviewAppReconciler struct {
+// ReviewAppConfigReconciler reconciles a ReviewAppConfig object
+type ReviewAppConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs/finalizers,verbs=update
 
-func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ReviewAppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	reviewApp := &reviewapps.ReviewApp{}
+	reviewApp := &reviewapps.ReviewAppConfig{}
 	if err := r.Get(ctx, req.NamespacedName, reviewApp); err != nil {
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
@@ -59,7 +59,7 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
 		if !controllerutil.ContainsFinalizer(reviewApp, finalizerName) {
-			log.Info("Adding Finalizer for the ReviewApp", "reviewapp", req.NamespacedName)
+			log.Info("Adding Finalizer for the ReviewAppConfig", "reviewapp", req.NamespacedName)
 			controllerutil.AddFinalizer(reviewApp, finalizerName)
 			if err := r.Update(ctx, reviewApp); err != nil {
 				return ctrl.Result{}, err
@@ -104,7 +104,7 @@ func (r *ReviewAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ReviewAppConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
 		// grab the job object, extract the owner...
 		job := rawObj.(*reviewapps.PullRequest)
@@ -114,7 +114,7 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 		// ...make sure it's a CronJob...
 		// TODO check APIVERSION!
-		if owner.Kind != "ReviewApp" {
+		if owner.Kind != "ReviewAppConfig" {
 			return nil
 		}
 
@@ -125,12 +125,12 @@ func (r *ReviewAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&reviewapps.ReviewApp{}).
+		For(&reviewapps.ReviewAppConfig{}).
 		Owns(&reviewapps.PullRequest{}).
 		Complete(r)
 }
 
-func (r *ReviewAppReconciler) deleteExternalResources(ctx context.Context, cronJob *reviewapps.ReviewApp) error {
+func (r *ReviewAppConfigReconciler) deleteExternalResources(ctx context.Context, cronJob *reviewapps.ReviewAppConfig) error {
 	//
 
 	// log := log.FromContext(ctx)

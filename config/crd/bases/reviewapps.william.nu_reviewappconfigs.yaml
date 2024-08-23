@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.15.0
-  name: reviewapps.reviewapps.william.nu
+  name: reviewappconfigs.reviewapps.william.nu
 spec:
   group: reviewapps.william.nu
   names:
-    kind: ReviewApp
-    listKind: ReviewAppList
-    plural: reviewapps
+    kind: ReviewAppConfig
+    listKind: ReviewAppConfigList
+    plural: reviewappconfigs
     shortNames:
     - rapp
-    singular: reviewapp
+    singular: reviewappconfig
   scope: Namespaced
   versions:
   - name: v1alpha1

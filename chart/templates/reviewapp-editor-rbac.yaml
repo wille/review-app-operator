@@ -8,7 +8,7 @@ rules:
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewapps
+  - reviewappconfigs
   verbs:
   - create
   - delete
@@ -20,6 +20,6 @@ rules:
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewapps/status
+  - reviewappconfigs/status
   verbs:
   - get

@@ -44,18 +44,18 @@ var _ = Describe("Hostname templates", func() {
 			BranchName: "feature/v1å[]",
 		},
 	}
-	reviewApp := ReviewApp{
+	reviewApp := ReviewAppConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "review-sample",
 		},
-		Spec: ReviewAppSpec{},
+		Spec: ReviewAppConfigSpec{},
 	}
 	deploymentName := "nginx"
 
 	It("should generate a valid hostname from a template", func() {
 		Expect(GetHostnameFromTemplate("{{.BranchName}}.review.example.com", deploymentName, pr, reviewApp)).To(Equal("feature-v1.review.example.com"))
 		Expect(GetHostnameFromTemplate("{{.BranchName}}-{{.DeploymentName}}.review.example.com", deploymentName, pr, reviewApp)).To(Equal("feature-v1-nginx.review.example.com"))
-		Expect(GetHostnameFromTemplate("{{.ReviewApp}}-{{.BranchName}}-{{.DeploymentName}}.review.example.com", deploymentName, pr, reviewApp)).To(Equal("review-sample-feature-v1-nginx.review.example.com"))
+		Expect(GetHostnameFromTemplate("{{.ReviewAppConfig}}-{{.BranchName}}-{{.DeploymentName}}.review.example.com", deploymentName, pr, reviewApp)).To(Equal("review-sample-feature-v1-nginx.review.example.com"))
 
 		long, _ := GetHostnameFromTemplate("{{.BranchName}}-"+strings.Repeat("a", validation.DNS1123LabelMaxLength)+".example.com", deploymentName, pr, reviewApp)
 		Expect(validation.IsDNS1123Subdomain(long)).To(HaveLen(0))

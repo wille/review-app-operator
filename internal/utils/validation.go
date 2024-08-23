@@ -21,8 +21,8 @@ func ImageHasDigest(image string) bool {
 	return strings.Contains(image, "@")
 }
 
-// IsImageAllowed checks if the image matches the base image set on the deployments in a ReviewApp
-func IsImageAllowed(reviewApp ReviewApp, image string) bool {
+// IsImageAllowed checks if the image matches the base image set on the deployments in a ReviewAppConfig
+func IsImageAllowed(reviewApp ReviewAppConfig, image string) bool {
 	for _, d := range reviewApp.Spec.Deployments {
 		for _, c := range d.Template.Spec.Containers {
 			if d.TargetContainerName == c.Name &&

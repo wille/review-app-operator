@@ -58,17 +58,17 @@ func normalize(s string) string {
 
 // GetHostnameFromTemplate generates a hostname from a template string.
 // Permitted variables are
-// - {{.ReviewApp}}
+// - {{.ReviewAppConfig}}
 // - {{.BranchName}}
 // - {{.DeploymentName}}
-func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequest, reviewApp ReviewApp) (string, error) {
+func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequest, reviewApp ReviewAppConfig) (string, error) {
 	if !strings.Contains(template, "{{.BranchName}}") {
 		return "", fmt.Errorf("Template %s does not contain {{.BranchName}}", template)
 	}
 
 	// Uses go template syntax
 	s := strings.ReplaceAll(template, "{{.BranchName}}", normalize(pr.Spec.BranchName))
-	s = strings.ReplaceAll(s, "{{.ReviewApp}}", normalize(reviewApp.Name))
+	s = strings.ReplaceAll(s, "{{.ReviewAppConfig}}", normalize(reviewApp.Name))
 	s = strings.ReplaceAll(s, "{{.DeploymentName}}", normalize(deploymentName))
 	s = strings.ReplaceAll(s, "{{.PullRequestNumber}}", strconv.Itoa(pr.Status.PullRequestNumber))
 
@@ -96,7 +96,7 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequ
 }
 
 // GetHostnamesFromTemplate returns a list of interpolated hostname templates for a a given deployment, pr and review app
-func GetHostnamesFromTemplate(templates []string, deploymentName string, pr PullRequest, reviewApp ReviewApp) ([]string, error) {
+func GetHostnamesFromTemplate(templates []string, deploymentName string, pr PullRequest, reviewApp ReviewAppConfig) ([]string, error) {
 	hosts := []string{}
 
 	for _, template := range templates {
@@ -119,6 +119,6 @@ func GetResourceName(name ...string) string {
 }
 
 // GetChildResourceName returns a child resource name for a reviewapp and pull request
-func GetChildResourceName(reviewApp *ReviewApp, pr *PullRequest) string {
+func GetChildResourceName(reviewApp *ReviewAppConfig, pr *PullRequest) string {
 	return GetResourceName(reviewApp.Name, pr.Spec.BranchName)
 }

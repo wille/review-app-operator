@@ -24,11 +24,11 @@ import (
 var log = ctrl.Log.WithName("webhooks")
 
 type WebhookBody struct {
-	// ReviewAppName is the name of the Review App to update
-	ReviewAppName string `json:"reviewAppName"`
+	// ReviewAppConfigName is the name of the Review App to update
+	ReviewAppConfigName string `json:"reviewAppName"`
 
-	// ReviewAppNamespace is the namespace of the Review App to update
-	ReviewAppNamespace string `json:"reviewAppNamespace"`
+	// ReviewAppConfigNamespace is the namespace of the Review App to update
+	ReviewAppConfigNamespace string `json:"reviewAppNamespace"`
 
 	// RepositoryURL is the repository url, eg https://github.com/wille/review-app-operator
 	RepositoryURL string `json:"repositoryUrl"`
@@ -123,14 +123,14 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reviewApp := reviewapps.ReviewApp{}
+	reviewApp := reviewapps.ReviewAppConfig{}
 	if err := wh.Client.Get(context.TODO(), types.NamespacedName{
-		Name:      webhook.ReviewAppName,
-		Namespace: webhook.ReviewAppNamespace,
+		Name:      webhook.ReviewAppConfigName,
+		Namespace: webhook.ReviewAppConfigNamespace,
 	}, &reviewApp); err != nil {
-		// Refuse to create a PullRequest if there is no valid ReviewApp in reviewAppRef
+		// Refuse to create a PullRequest if there is no valid ReviewAppConfig in reviewAppRef
 		if apierrors.IsNotFound(err) {
-			log.Error(nil, "Review app not found", "name", webhook.ReviewAppName)
+			log.Error(nil, "Review app not found", "name", webhook.ReviewAppConfigName)
 			http.Error(w, "Review app not found", http.StatusNotFound)
 			return
 		}

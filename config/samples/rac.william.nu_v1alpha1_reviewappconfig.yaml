@@ -1,5 +1,5 @@
 apiVersion: reviewapps.william.nu/v1alpha1
-kind: ReviewApp
+kind: ReviewAppConfig
 metadata:
   name: reviewapp-sample
   labels:
