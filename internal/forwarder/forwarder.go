@@ -158,12 +158,27 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		// connectionTimeout
 		case <-timeout.Done():
+			// Update the deployment to be able to read the latest status
+			c.Update(r.Context(), &deployment)
 			status, _, _ := utils.GetDeploymentStatus(&deployment)
+
 			log.Info(fmt.Sprintf("Upstream timeout: %s", strings.Trim(status, "\n")))
 
 			// This page is sent when the Review App was not scaled up within the `connectionTimeout` limit.
 			// Later we can expand it to automatically read deployment status updates and automatically refresh.
-			http.Error(w, fmt.Sprintf("Timeout loading Review App, try reloading the page...\n\n%s", status), http.StatusAccepted)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `<html>
+			<head>
+				<title>Loading...</title>
+				<meta http-equiv="refresh" content="5">
+			</head>
+			<body>
+				<p>Connecting to review app...</p>
+				<p>%s</p>
+			</body>
+			</html>`, status)
 			return
 		// Client connection reset
 		case <-r.Context().Done():

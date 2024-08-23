@@ -4,7 +4,7 @@ scaleDownAfter: 1h
 
 # The time to wait before stopping connection attempts to upstream review app
 # The user will be prompted to refresh the page to try again and given the deployment status
-connectionTimeout: 60s
+connectionTimeout: 10s
 
 # The active namespaces
 namespaces:
