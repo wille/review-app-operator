@@ -10,14 +10,6 @@ import (
 // MatchingLabels selector to select resources managed by the review-app-controller
 var MatchingLabels = client.MatchingLabels{"app.kubernetes.io/managed-by": "review-app-controller"}
 
-// LastRequestTimeAnnotation is the annotation set on deployments to signal
-// when the last request was made there so it can be downscaled
-const LastRequestTimeAnnotation = "reviewapps.william.nu/last-request"
-
-// HostAnnotation is set on services to store the hostnames they are active for
-// and is used by the indexer
-const HostAnnotation = "reviewapps.william.nu/hosts"
-
 // HostIndexFieldName is the field indexes on Services to store the hostnames they are active for
 const HostIndexFieldName = ".hosts"
 

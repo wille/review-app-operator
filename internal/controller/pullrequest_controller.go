@@ -18,10 +18,7 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"maps"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,6 +93,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := r.Update(ctx, pr); err != nil {
 			return ctrl.Result{}, err
 		}
+		// return ctrl.Result{ }, nil
 	}
 
 	// Shared name for all child resources
@@ -132,6 +130,13 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
+	existingPr := pr.DeepCopy()
+	patch := client.MergeFrom(existingPr)
+
+	if pr.Status.Deployments == nil {
+		pr.Status.Deployments = make(map[string]*reviewapps.DeploymentStatus)
+	}
+
 	// Loop all desired deployments in the ReviewAppConfig spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
 		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
@@ -163,6 +168,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
+				Replicas:                deploymentSpec.Replicas,
 				Template:                *podTemplate,
 				Strategy:                deploymentSpec.Strategy,
 				MinReadySeconds:         deploymentSpec.MinReadySeconds,
@@ -175,14 +181,15 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		hostnameAnnotationValue, err := json.Marshal(hostnames)
-		if err != nil {
-			return ctrl.Result{}, err
+
+		if pr.Status.Deployments[deploymentSpec.Name] == nil {
+			pr.Status.Deployments[deploymentSpec.Name] = &reviewapps.DeploymentStatus{
+				LastActive: metav1.Now(),
+				IsActive:   deploymentSpec.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
+			}
 		}
 
-		// Annotate the deployment with the hostnames for this pull request.
-		// The forwarder will target this deployment and keep track of requests
-		desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
+		pr.Status.Deployments[deploymentSpec.Name].Hostnames = hostnames
 
 		var runningDeployment appsv1.Deployment
 		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
@@ -196,15 +203,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 
-			// New deployments are downscaled by default.
-			// The problem with this approach is that the incoming deploy webhook
-			// will not be able to tell if the pod actually started and became healthy
-			// TODO
-			var replicas int32 = 1
-			desiredDeployment.Spec.Replicas = &replicas
-
-			// Set the "last request" time so the downscaler can process it
-			desiredDeployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = time.Now().Format(time.RFC3339)
+			// TODO start here otherwise the Update will start it below next reconcile
 
 			if err := r.Create(ctx, desiredDeployment); err != nil {
 				return ctrl.Result{}, err
@@ -224,15 +223,28 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				}
 			}
 
+			replicas := *runningDeployment.Spec.Replicas
+			isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
+			if replicas == 0 {
+				if isActive {
+					if deploymentSpec.Replicas != nil {
+						replicas = *deploymentSpec.Replicas
+					} else {
+						replicas = 1
+					}
+				}
+			} else if !isActive {
+				replicas = 0
+			}
+
 			// If the deployment spec in the ReviewAppConfig gets updated we do not update the deployment
 			// The deployment needs to be manually deleted.
 			if updatedImage ||
-				desiredDeployment.ObjectMeta.Annotations[utils.HostAnnotation] !=
-					runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] ||
+				*runningDeployment.Spec.Replicas != replicas ||
 				!equality.Semantic.DeepDerivative(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) {
 
+				runningDeployment.Spec.Replicas = &replicas
 				runningDeployment.ObjectMeta.Labels = desiredLabels
-				runningDeployment.ObjectMeta.Annotations[utils.HostAnnotation] = string(hostnameAnnotationValue)
 
 				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 					return ctrl.Result{}, err
@@ -290,6 +302,12 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 				log.Info("Service updated", "serviceName", deploymentName)
 			}
+		}
+	}
+
+	if !equality.Semantic.DeepEqual(existingPr.Status, pr.Status) {
+		if err := r.Status().Patch(ctx, pr, patch); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -375,19 +393,16 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func SetupHostIndex(mgr ctrl.Manager) error {
 	// Index deployments by the hosts annotation to query them in the forwarder
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &appsv1.Deployment{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
-		svc := rawObj.(*appsv1.Deployment)
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
+		pr := rawObj.(*reviewapps.PullRequest)
 
-		if enc, ok := svc.Annotations[utils.HostAnnotation]; ok {
-			var hosts []string
-			if err := json.Unmarshal([]byte(enc), &hosts); err != nil {
-				fmt.Printf("Failed to unmarshal deployment %s host annotation: %s\n", svc.Name, err)
-				return []string{}
-			}
-			return hosts
+		var hosts []string
+
+		for _, d := range pr.Status.Deployments {
+			hosts = append(hosts, d.Hostnames...)
 		}
 
-		return []string{}
+		return hosts
 	}); err != nil {
 		return err
 	}

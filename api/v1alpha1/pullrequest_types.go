@@ -15,11 +15,29 @@ type PullRequestSpec struct {
 
 // PullRequestStatus defines the observed state of PullRequest
 type PullRequestStatus struct {
-	DeployedAt        metav1.Time `json:"deployedAt"`
-	DeployedBy        string      `json:"deployedBy"`
-	RepositoryURL     string      `json:"repositoryUrl"`
-	PullRequestURL    string      `json:"pullRequestUrl"`
-	PullRequestNumber int         `json:"pullRequestNumber"`
+	// +optional
+	DeployedAt metav1.Time `json:"deployedAt,omitempty"`
+	// +optional
+	DeployedBy string `json:"deployedBy,omitempty"`
+	// +optional
+	RepositoryURL string `json:"repositoryUrl,omitempty"`
+	// +optional
+	PullRequestURL string `json:"pullRequestUrl,omitempty"`
+	// +optional
+	PullRequestNumber int `json:"pullRequestNumber,omitempty"`
+
+	Deployments map[string]*DeploymentStatus `json:"activeDeployments"`
+}
+
+type DeploymentStatus struct {
+	// +optional
+	LastActive metav1.Time `json:"lastActive,omitempty"`
+
+	// +optional
+	IsActive bool `json:"isActive"`
+
+	// +optional
+	Hostnames []string `json:"hostnames"`
 }
 
 // +kubebuilder:object:root=true

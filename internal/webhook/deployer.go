@@ -12,10 +12,10 @@ import (
 
 	"github.com/wille/review-app-operator/internal/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	. "github.com/wille/review-app-operator/api/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func writeFlush(w http.ResponseWriter, s string) {
@@ -31,37 +31,31 @@ func createOrUpdatePullRequest(
 	ctx context.Context,
 	c client.Client,
 	reviewApp *ReviewAppConfig,
-	key types.NamespacedName,
 	webhook WebhookBody,
 	w http.ResponseWriter,
 ) (*PullRequest, error) {
-	desiredPr := PullRequest{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      key.Name,
-			Labels:    reviewApp.Labels,
-			Namespace: key.Namespace,
-		},
-		Spec: PullRequestSpec{
-			ReviewAppConfigRef: reviewApp.Name,
-			ImageName:          webhook.Image,
-			BranchName:         webhook.BranchName,
-			// TODO set events and statuses
-		},
-		Status: PullRequestStatus{
-			DeployedBy:        webhook.Sender,
-			DeployedAt:        metav1.Now(),
-			RepositoryURL:     webhook.RepositoryURL,
-			PullRequestURL:    webhook.PullRequestURL,
-			PullRequestNumber: webhook.PullRequestNumber,
-		},
+	desiredPr := utils.PullRequestFor(*reviewApp, utils.PullRequestCreationOptions{
+		Image:             webhook.Image,
+		BranchName:        webhook.BranchName,
+		DeployedBy:        webhook.Sender,
+		RepositoryURL:     webhook.RepositoryURL,
+		PullRequestURL:    webhook.PullRequestURL,
+		PullRequestNumber: webhook.PullRequestNumber,
+	})
+
+	key := types.NamespacedName{
+		Namespace: desiredPr.Namespace,
+		Name:      desiredPr.Name,
 	}
+
+	fmt.Println("Desired PR labels:", desiredPr.ObjectMeta.Labels, "___", reviewApp.ObjectMeta.Labels)
 
 	for _, deployment := range reviewApp.Spec.Deployments {
 		for _, container := range deployment.Template.Spec.Containers {
 			// The image repo and name defined in the ReviewAppConfig must match the deployed image
 			if container.Name == deployment.TargetContainerName && !utils.IsSameImageRepo(container.Image, webhook.Image) {
 				err := fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", container.Image, webhook.Image)
-				log.Error(err, "The image repository is immutable", "name", key.Name)
+				log.Error(err, "The image repository is immutable")
 				w.WriteHeader(http.StatusForbidden)
 				return nil, err
 			}
@@ -73,6 +67,15 @@ func createOrUpdatePullRequest(
 	if err := c.Get(ctx, key, &existingPr); err != nil {
 		// Create the PullRequest if it is not found
 		if apierrors.IsNotFound(err) {
+			// for _, deployment := range reviewApp.Spec.Deployments {
+			// 	desiredPr.Status.Deployments[deployment.Name] = &DeploymentStatus{
+			// 		LastActive: metav1.Now(),
+			// 		IsActive:   deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
+			// 	}
+			// }
+
+			// log.Info("Create debug", "desiredPr", desiredPr.Status.Deployments)
+
 			if err := c.Create(ctx, &desiredPr); err != nil {
 				return nil, err
 			}
@@ -86,7 +89,9 @@ func createOrUpdatePullRequest(
 	} else {
 		patch := client.MergeFrom(existingPr.DeepCopy())
 
+		existingPr.ObjectMeta.Labels = desiredPr.ObjectMeta.Labels
 		existingPr.Spec = desiredPr.Spec
+		existingPr.Status = desiredPr.Status
 
 		// Update the PullRequest if it is found
 		if err := c.Patch(ctx, &existingPr, patch); err != nil {
@@ -94,7 +99,12 @@ func createOrUpdatePullRequest(
 			return nil, err
 		}
 
-		existingPr.Status = desiredPr.Status
+		for _, deployment := range reviewApp.Spec.Deployments {
+			existingPr.Status.Deployments[deployment.Name].LastActive = metav1.Now()
+			if !existingPr.Status.Deployments[deployment.Name].IsActive {
+				existingPr.Status.Deployments[deployment.Name].IsActive = deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy
+			}
+		}
 
 		if err := c.Status().Patch(ctx, &existingPr, patch); err != nil {
 			log.Error(err, "Failed to update status")

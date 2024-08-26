@@ -28,6 +28,8 @@ spec:
             type: object
           spec:
             properties:
+              connectionTimeout:
+                type: string
               deployments:
                 items:
                   properties:
@@ -43,6 +45,11 @@ spec:
                     progressDeadlineSeconds:
                       format: int32
                       type: integer
+                    replicas:
+                      format: int32
+                      type: integer
+                    startOnDeploy:
+                      type: boolean
                     strategy:
                       properties:
                         rollingUpdate:
@@ -3665,13 +3672,16 @@ spec:
                           type: object
                       type: object
                   required:
-                  - hostTemplates
                   - name
                   - targetContainerName
                   - targetContainerPort
                   - template
                   type: object
                 type: array
+              scaleDownAfter:
+                type: string
+              startOnDeploy:
+                type: boolean
             required:
             - deployments
             type: object

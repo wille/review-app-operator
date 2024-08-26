@@ -4,8 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/wille/review-app-operator/internal/utils"
-	appsv1 "k8s.io/api/apps/v1"
+	. "github.com/wille/review-app-operator/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,7 +30,7 @@ func (ds Downscaler) NeedLeaderElection() bool {
 func (ds Downscaler) Start(ctx context.Context) error {
 	log.Info("starting downscaler", "scaleDownAfter", ds.ScaleDownAfter)
 
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Minute)
 
 	for {
 		select {
@@ -46,42 +45,39 @@ func (ds Downscaler) Start(ctx context.Context) error {
 
 func (ds Downscaler) run(dur time.Duration, ctx context.Context) {
 	// List all deployments owned by the Review App Operator
-	var list appsv1.DeploymentList
-	if err := ds.Client.List(ctx, &list, utils.MatchingLabels); err != nil {
-		log.Error(err, "Failed to list deployments")
+	var list PullRequestList
+	if err := ds.Client.List(ctx, &list); err != nil {
+		log.Error(err, "Failed to list pull requests")
 		return
 	}
 
-	for _, deployment := range list.Items {
-		// Ignore downscaled deployments
-		if *deployment.Spec.Replicas == 0 {
+	for _, pr := range list.Items {
+		ds.processPullRequest(pr, dur, ctx)
+	}
+}
+
+func (ds Downscaler) processPullRequest(pr PullRequest, dur time.Duration, ctx context.Context) error {
+	for deploymentName, status := range pr.Status.Deployments {
+		if !status.IsActive {
 			continue
 		}
 
-		// Ignore deployments with the annotation not set
-		// This is fine for now since new PRs are downscaled by default
-		d := deployment.Annotations[utils.LastRequestTimeAnnotation]
-		if d == "" {
-			continue
-		}
-
-		timestamp, err := time.Parse(time.RFC3339, d)
-		if err != nil {
-			continue
-		}
+		// TODO duraiton ReviewAppConfig.Spec.ScaleDownAfter || Deployment ScaleDownAfter
 
 		// If the latest request was more than TimeoutSeconds ago, scale down the deployment
-		if timestamp.Add(dur).Before(time.Now()) {
-			var replicas int32 = 0
-			deployment.Spec.Replicas = &replicas
+		if status.LastActive.Add(dur).Before(time.Now()) {
+			patch := client.MergeFrom(pr.DeepCopy())
+			pr.Status.Deployments[deploymentName].IsActive = false
 
 			// TODO Add event to the deployment
-			if err := ds.Client.Update(ctx, &deployment); err != nil {
-				log.Error(err, "Failed to downscale deployment", "deployment", deployment.Name)
+			if err := ds.Client.Status().Patch(ctx, &pr, patch); err != nil {
+				log.Error(err, "Failed to downscale deployment", "deployment", pr.Name)
 				continue
 			}
 
-			log.Info("Scaled down", "name", deployment.Name)
+			log.Info("Scaling down", "name", pr.Name, "lastActive", status.LastActive, "now", time.Now().Format(time.RFC3339))
 		}
 	}
+
+	return nil
 }

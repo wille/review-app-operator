@@ -10,15 +10,16 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
-
-var log = ctrl.Log.WithName("forwarder")
 
 // Hop-by-hop headers. These are removed when sent to the backend.
 // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
@@ -68,16 +69,19 @@ func getClusterDomain() string {
 	return "cluster.local"
 }
 
+var id = 0
+
 func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := fwd.Client
 
 	// List all deployments indexed by the host
-	var list appsv1.DeploymentList
+	var list PullRequestList
 	if err := c.List(r.Context(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
 		panic(err)
 	}
 
-	log = ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String())
+	id++
+	log := ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String(), "id", id)
 
 	if len(list.Items) == 0 {
 		// No deployments indexed for this host found
@@ -94,44 +98,54 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deployment := list.Items[0]
+	pr := list.Items[0]
 
-	log = log.WithValues("deployment", deployment.Name)
+	log = log.WithValues("deployment", pr.Name)
 
 	doUpdate := false
-	patch := client.MergeFrom(deployment.DeepCopy())
+	patch := client.MergeFrom(pr.DeepCopy())
 
-	// Scale up the deployment
-	if *deployment.Spec.Replicas == 0 {
-		var replicas int32 = 1
-		deployment.Spec.Replicas = &replicas
+	target := ""
 
-		log.Info("Scaling up")
-		doUpdate = true
-	}
+	var deploymentName string
+	for deploymentName2, status := range pr.Status.Deployments {
+		if target != "" {
+			break
+		}
+		for _, hostname := range status.Hostnames {
+			if hostname == r.Host {
 
-	timestamp := time.Now().Format(time.RFC3339)
+				// TODO common function to get deployment
+				deploymentName = utils.GetResourceName(pr.Name, deploymentName2)
 
-	// Update the deployment's last request annotation once a minute avoid excessive patch requests
-	currentTimestamp, err := time.Parse(time.RFC3339, deployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation])
-	if err != nil || currentTimestamp.Add(time.Minute).Before(time.Now()) {
-		deployment.ObjectMeta.Annotations[utils.LastRequestTimeAnnotation] = timestamp
-		doUpdate = true
+				target = fmt.Sprintf("%s.%s.svc.%s:%d", deploymentName, pr.Namespace, getClusterDomain(), 80)
+
+				if !status.IsActive {
+					status.IsActive = true
+					doUpdate = true
+				}
+
+				// Only patch PullRequest last active timestamp once a minute
+				if status.LastActive.Add(time.Minute).Before(time.Now()) {
+					doUpdate = true
+					status.LastActive = metav1.Now()
+				}
+
+				break
+			}
+		}
+
 	}
 
 	if doUpdate {
-		if err := c.Patch(r.Context(), &deployment, patch); err != nil {
+		if err := c.Status().Patch(r.Context(), &pr, patch); err != nil {
 			log.Error(err, "Error updating deployment")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Format the target service to forward the request to
-	// eg. review-app-1.default.svc.cluster.local:80
-	// Always uses port 80
-	port := 80
-	serviceHostname := fmt.Sprintf("%s.%s.svc.%s:%d", deployment.Name, deployment.Namespace, getClusterDomain(), port)
+	serviceHostname := target
 
 	// or := r.Clone(r.Context())
 
@@ -150,8 +164,8 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The label values are "normalized"
-	r.Header.Set("X-Branch", deployment.Labels["app.kubernetes.io/name"])
-	r.Header.Set("X-Review-App", deployment.Labels["app.kubernetes.io/part-of"])
+	r.Header.Set("X-Branch", pr.Labels["app.kubernetes.io/name"])
+	r.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
 
 	attempt := 0
 
@@ -160,7 +174,14 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// connectionTimeout
 		case <-timeout.Done():
 			// Update the deployment to be able to read the latest status
-			c.Update(r.Context(), &deployment)
+			var deployment appsv1.Deployment
+			if err := c.Get(r.Context(), client.ObjectKey{
+				Namespace: pr.Namespace,
+				Name:      deploymentName,
+			}, &deployment); err != nil {
+				log.Error(err, "Waiting for deployment")
+				http.Error(w, "Waiting for deployment", http.StatusInternalServerError)
+			}
 			status, _, _ := utils.GetDeploymentStatus(&deployment)
 
 			log.Info(fmt.Sprintf("Upstream timeout: %s", strings.Trim(status, "\n")))
@@ -192,8 +213,18 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		resp, err := client.Do(r)
 		if err != nil {
 			if attempt%5 == 0 {
-				status, _, _ := utils.GetDeploymentStatus(&deployment)
-				log.Info(fmt.Sprintf("Connection attempt: %s: %s", strings.Trim(status, "\n"), err.Error()))
+				var deployment appsv1.Deployment
+				if _err := c.Get(r.Context(), types.NamespacedName{
+					Namespace: pr.Namespace,
+					Name:      deploymentName,
+				}, &deployment); _err != nil {
+					log.Error(_err, "Waiting for deployment")
+					http.Error(w, "Waiting for deployment", http.StatusInternalServerError)
+				} else {
+					status, _, _ := utils.GetDeploymentStatus(&deployment)
+					log.Info(fmt.Sprintf("Connection attempt: %s: %s", strings.Trim(status, "\n"), err.Error()))
+				}
+
 			}
 
 			attempt++
@@ -215,12 +246,14 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.WithValues("status", resp.Status).Info("Request finished")
+		log.Info("Request finished", "status", resp.Status)
 		break
 	}
 }
 
 func (fw Forwarder) Start(ctx context.Context) error {
+	log := ctrl.Log.WithName("forwarder")
+
 	log.Info("Starting forwarding proxy", "addr", fw.Addr)
 
 	srv := http.Server{Addr: fw.Addr, Handler: fw}

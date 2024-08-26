@@ -27,6 +27,16 @@ type Deployments struct {
 	TargetContainerName string `json:"targetContainerName"`
 	TargetContainerPort int32  `json:"targetContainerPort"`
 
+	// +optional
+	// +default:1
+	Replicas *int32 `json:"replicas,omitempty"`
+	// +optional
+	StartOnDeploy bool `json:"startOnDeploy,omitempty"`
+	// +optional
+	// ConnectionTimeout metav1.Duration `json:"connectionTimeout,omitempty"`
+	// +optional
+	// ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
+
 	// HostTemplates must contain at least {{.BranchName}}
 	HostTemplates []string `json:"hostTemplates"`
 
@@ -45,6 +55,13 @@ type Deployments struct {
 
 // ReviewAppConfigSpec defines the desired state of ReviewAppConfig
 type ReviewAppConfigSpec struct {
+	// +optional
+	StartOnDeploy bool `json:"startOnDeploy,omitempty"`
+	// +optional
+	ConnectionTimeout metav1.Duration `json:"connectionTimeout,omitempty"`
+	// +optional
+	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
+
 	Deployments []Deployments `json:"deployments"`
 }
 
@@ -67,7 +84,7 @@ type ReviewAppConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=rapp
+// +kubebuilder:resource:shortName=rapp,reviewapp
 
 // ReviewAppConfig is the Schema for the reviewapps API
 type ReviewAppConfig struct {

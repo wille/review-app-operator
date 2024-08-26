@@ -37,6 +37,20 @@ spec:
             type: object
           status:
             properties:
+              activeDeployments:
+                additionalProperties:
+                  properties:
+                    hostnames:
+                      items:
+                        type: string
+                      type: array
+                    isActive:
+                      type: boolean
+                    lastActive:
+                      format: date-time
+                      type: string
+                  type: object
+                type: object
               deployedAt:
                 format: date-time
                 type: string
@@ -49,11 +63,7 @@ spec:
               repositoryUrl:
                 type: string
             required:
-            - deployedAt
-            - deployedBy
-            - pullRequestNumber
-            - pullRequestUrl
-            - repositoryUrl
+            - activeDeployments
             type: object
         type: object
     served: true

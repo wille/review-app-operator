@@ -142,6 +142,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
 
+	// TODO unify with pullrequest.go
 	name := types.NamespacedName{
 		Name:      utils.GetResourceName(reviewApp.Name, webhook.BranchName),
 		Namespace: reviewApp.Namespace,
@@ -173,7 +174,6 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Context(),
 			wh.Client,
 			&reviewApp,
-			name,
 			webhook,
 			w,
 		)

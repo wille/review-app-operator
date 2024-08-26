@@ -46,7 +46,7 @@ scaleDownAfter: 1h # scale down a pull request deployment if inactive for this l
 
 > [!IMPORTANT]
 >
-> - The `forwarder.ingress.host` field must be a a wildcard hostname as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewApp`
+> - The `forwarder.ingress.host` field must be a a wildcard hostname as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewAppConfig`
 > - The `webhook.ingress.host` is the host used for the [Review App Action](https://github.com/wille/review-app-action) webhook
 
 ## Install with Helm
@@ -60,15 +60,15 @@ $ helm install review-app-operator review-app-operator/review-app-operator \
 
 ## Creating a Review App
 
-The Review App Controller introduces two new Kubernetes resources: `ReviewApp` and `PullRequest`.
+The Review App Controller introduces two new Kubernetes resources: `ReviewAppConfig` and `PullRequest`.
 
-The `ReviewApp` is similar to a `Deployment` but with extra fields to select which container and port to target.
+The `ReviewAppConfig` is similar to a `Deployment` but with extra fields to select which container and port to target.
 
 ### `my-review-app.yml`
 
 ```yaml
 apiVersion: reviewapps.william.nu/v1alpha1
-kind: ReviewApp
+kind: ReviewAppConfig
 metadata:
   name: my-review-app
   namespace: staging
@@ -93,13 +93,13 @@ spec:
               image: redis:7
 ```
 
-Create this ReviewApp
+Create this ReviewAppConfig
 `kubectl apply -f my-review-app.yml`
 
 > [!NOTE]
-> See the [ReviewApp sample](/config/samples/reviewapps.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
+> See the [ReviewAppConfig sample](/config/samples/reviewapps.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
 >
-> Hostnames can be templated with `{{.ReviewApp}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
+> Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
 
 ## PullRequest example
 
