@@ -168,7 +168,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Selector: &metav1.LabelSelector{
 					MatchLabels: selectorLabels,
 				},
-				Replicas:                deploymentSpec.Replicas,
+				Replicas:                &deploymentSpec.Replicas,
 				Template:                *podTemplate,
 				Strategy:                deploymentSpec.Strategy,
 				MinReadySeconds:         deploymentSpec.MinReadySeconds,
@@ -203,7 +203,14 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 
-			// TODO start here otherwise the Update will start it below next reconcile
+			// Pull request was created and is active, scale it up
+			if pr.Status.Deployments[deploymentSpec.Name].IsActive {
+				if deploymentSpec.Replicas == 0 {
+					*desiredDeployment.Spec.Replicas = 1
+				} else {
+					*desiredDeployment.Spec.Replicas = deploymentSpec.Replicas
+				}
+			}
 
 			if err := r.Create(ctx, desiredDeployment); err != nil {
 				return ctrl.Result{}, err
@@ -227,8 +234,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
 			if replicas == 0 {
 				if isActive {
-					if deploymentSpec.Replicas != nil {
-						replicas = *deploymentSpec.Replicas
+					if deploymentSpec.Replicas != 0 {
+						replicas = deploymentSpec.Replicas
 					} else {
 						replicas = 1
 					}

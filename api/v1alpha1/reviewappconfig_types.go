@@ -28,8 +28,7 @@ type Deployments struct {
 	TargetContainerPort int32  `json:"targetContainerPort"`
 
 	// +optional
-	// +default:1
-	Replicas *int32 `json:"replicas,omitempty"`
+	Replicas int32 `json:"replicas,omitempty"`
 	// +optional
 	StartOnDeploy bool `json:"startOnDeploy,omitempty"`
 	// +optional
