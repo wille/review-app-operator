@@ -12,7 +12,7 @@ spec:
     listKind: ReviewAppConfigList
     plural: reviewappconfigs
     shortNames:
-    - rapp
+    - reviewapp
     singular: reviewappconfig
   scope: Namespaced
   versions:
@@ -48,6 +48,8 @@ spec:
                     replicas:
                       format: int32
                       type: integer
+                    scaleDownAfter:
+                      type: string
                     startOnDeploy:
                       type: boolean
                     strategy:
@@ -3672,6 +3674,7 @@ spec:
                           type: object
                       type: object
                   required:
+                  - hostTemplates
                   - name
                   - targetContainerName
                   - targetContainerPort

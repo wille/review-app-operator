@@ -83,7 +83,7 @@ type ReviewAppConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=rapp,reviewapp
+// +kubebuilder:resource:shortName=reviewapp
 
 // ReviewAppConfig is the Schema for the reviewapps API
 type ReviewAppConfig struct {
