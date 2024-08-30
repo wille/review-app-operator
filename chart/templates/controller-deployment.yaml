@@ -22,7 +22,6 @@ spec:
         - --controller
         - --leader-elect
         - --health-probe-bind-address=:8081
-        - --scale-down-after={{ .Values.scaleDownAfter }}
         - --namespaces={{ join "," .Values.namespaces }}
         command:
         - /manager

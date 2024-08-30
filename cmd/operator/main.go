@@ -51,9 +51,6 @@ func main() {
 	var connectionTimeout time.Duration
 	flag.DurationVar(&connectionTimeout, "connection-timeout", time.Second*10, "Timeout connecting to PR apps")
 
-	var scaleDownAfter time.Duration
-	flag.DurationVar(&scaleDownAfter, "scale-down-after", time.Hour, "Scale down deployments that has not been accessed for some time")
-
 	var metricsAddr string
 	var probeAddr string
 	var enableLeaderElection bool
@@ -200,7 +197,7 @@ func main() {
 	}
 
 	if enableController {
-		if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient(), ScaleDownAfter: scaleDownAfter}); err != nil {
+		if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient()}); err != nil {
 			setupLog.Error(err, "unable to create downscaler")
 			os.Exit(1)
 		}

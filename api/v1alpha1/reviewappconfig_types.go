@@ -35,7 +35,7 @@ type Deployments struct {
 	// +optional
 	// ConnectionTimeout metav1.Duration `json:"connectionTimeout,omitempty"`
 	// +optional
-	// ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
+	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
 	// HostTemplates must contain at least {{.BranchName}}
 	HostTemplates []string `json:"hostTemplates"`
