@@ -27,7 +27,7 @@ func (ds Downscaler) NeedLeaderElection() bool {
 
 // Starts the ticker to watch deployments
 func (ds Downscaler) Start(ctx context.Context) error {
-	log.Info("starting downscaler", "scaleDownAfter")
+	log.Info("starting downscaler")
 
 	ticker := time.NewTicker(time.Minute)
 
