@@ -86,7 +86,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(list.Items) == 0 {
 		// No deployments indexed for this host found
 		// TODO BETTER ERRORS
-		log.Error(nil, "No deployment found", "req", r.URL)
+		log.Info("No deployment found", "req", r.URL)
 		http.Error(w, fmt.Sprintf("No review app found for host %s", r.Host), http.StatusNotFound)
 		return
 	}
@@ -208,7 +208,11 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		default:
 		}
-		client := &http.Client{}
+		client := &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 
 		resp, err := client.Do(r)
 		if err != nil {
