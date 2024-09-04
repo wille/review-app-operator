@@ -32,22 +32,10 @@ func normalize(s string) string {
 	s = regexp.MustCompile("[-/_.]+").ReplaceAllString(s, "-")
 
 	// Only allow leading a-z to comply with DNS1035 for Service names and label values
-	for i, c := range s {
-		if isAlpha(c) {
-			break
-		}
-
-		s = s[i+1:]
-	}
+	s = regexp.MustCompile("^[^a-z]+").ReplaceAllString(s, "")
 
 	// Only allow trailing alphanumeric characters to comply with DNS1123 and DNS1035
-	for i := len(s) - 1; i >= 0; i-- {
-		if isAlphanumeric(rune(s[i])) {
-			break
-		}
-
-		s = s[:i]
-	}
+	s = regexp.MustCompile("[^a-z0-9]+$").ReplaceAllString(s, "")
 
 	if len(s) > validation.DNS1123LabelMaxLength {
 		s = normalize(s[:validation.DNS1123LabelMaxLength])

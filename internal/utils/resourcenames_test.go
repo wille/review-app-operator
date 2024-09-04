@@ -35,6 +35,7 @@ var _ = Describe("Resource names", func() {
 		validate("test-test", "test-test")
 		validate(strings.Repeat("a", 100), strings.Repeat("a", validation.DNS1035LabelMaxLength))
 		validate("feature/v1å[]", "feature-v1")
+		validate("86954rgpd_tillo-api-upgrade", "rgpd-tillo-api-upgrade")
 	})
 })
 
