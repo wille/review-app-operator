@@ -9,7 +9,6 @@ import (
 )
 
 func deletePullRequestByName(client client.Client, key types.NamespacedName) error {
-
 	var pr reviewapps.PullRequest
 	if err := client.Get(context.TODO(), key, &pr); err != nil {
 		return err

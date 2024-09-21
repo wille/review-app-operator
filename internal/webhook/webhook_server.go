@@ -144,27 +144,27 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// TODO unify with pullrequest.go
 	name := types.NamespacedName{
-		Name:      utils.GetResourceName(reviewApp.Name, webhook.BranchName),
+		Name:      pullRequestResourceName,
 		Namespace: reviewApp.Namespace,
 	}
 
 	switch r.Method {
 	case http.MethodDelete:
-		log.Info("Delete webhook received", "name", pullRequestResourceName)
+		log.Info("Delete webhook received", "name", name)
 
 		if err := deletePullRequestByName(wh.Client, name); err != nil {
 			if apierrors.IsNotFound(err) {
-				log.Info("Pull request not found", "name", pullRequestResourceName)
+				log.Info("Pull request not found", "name", name)
 				http.Error(w, "Pull request not found", http.StatusNotFound)
 				return
 			}
 
-			log.Error(err, "Error deleting pull request", "name", pullRequestResourceName)
+			log.Error(err, "Error deleting pull request", "name", name)
 			http.Error(w, "Error deleting pull request", http.StatusInternalServerError)
 			return
 		}
 
-		log.Info("Pull request deleted", "name", pullRequestResourceName)
+		log.Info("Pull request deleted", "name", name)
 		http.Error(w, "Pull request deleted", http.StatusOK)
 		return
 	case http.MethodPost:
@@ -178,7 +178,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w,
 		)
 		if err != nil {
-			log.Error(err, "Error deploying", "name", pullRequestResourceName)
+			log.Error(err, "Error deploying", "name", name)
 			http.Error(w, "Error deploying", http.StatusInternalServerError)
 			return
 		}
