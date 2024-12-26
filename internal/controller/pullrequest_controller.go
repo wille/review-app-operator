@@ -96,24 +96,21 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// return ctrl.Result{ }, nil
 	}
 
-	// Shared name for all child resources
-	sharedName := utils.GetChildResourceName(&reviewApp, pr)
-
 	// Deployments owned by this PullRequest
-	var list appsv1.DeploymentList
-	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{pullRequestOwnerKey: req.Name}); err != nil {
+	var deploymentList appsv1.DeploymentList
+	if err := r.List(ctx, &deploymentList, client.InNamespace(req.Namespace), client.MatchingFields{pullRequestOwnerKey: req.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Delete deployments that are not in the spec
-	for _, runningDeployment := range list.Items {
+	for _, runningDeployment := range deploymentList.Items {
 		found := false
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
+			deploymentName := utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name)
 			selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
 
-			// If the deployment selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
+			// If the deployment name or selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
 			// This should not happen as the selector labels are derived from the PullRequest and ReviewAppConfig but guard anyways against having stale deployments
 			if runningDeployment.ObjectMeta.Name == deploymentName &&
 				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.ObjectMeta.Labels) {
@@ -139,7 +136,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Loop all desired deployments in the ReviewAppConfig spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
+		deploymentName := utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name)
 
 		// Desired labels for all subresources, including all labels set on the ReviewAppConfig
 		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name)

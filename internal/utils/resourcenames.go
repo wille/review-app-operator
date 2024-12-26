@@ -110,3 +110,7 @@ func GetResourceName(name ...string) string {
 func GetChildResourceName(reviewApp *ReviewAppConfig, pr *PullRequest) string {
 	return GetResourceName(reviewApp.Name, pr.Spec.BranchName)
 }
+
+func GetDeploymentName(reviewApp *ReviewAppConfig, pr *PullRequest, deploymentName string) string {
+	return GetResourceName(reviewApp.Name, deploymentName, pr.Spec.BranchName)
+}

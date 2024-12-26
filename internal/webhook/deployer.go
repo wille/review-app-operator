@@ -115,8 +115,6 @@ func createOrUpdatePullRequest(
 		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", desiredPr.Spec.BranchName))
 	}
 
-	sharedName := utils.GetChildResourceName(reviewApp, &desiredPr)
-
 	attempts := 0
 	for {
 		finished := true
@@ -128,7 +126,7 @@ func createOrUpdatePullRequest(
 		}
 
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			deploymentName := utils.GetResourceName(sharedName, deploymentSpec.Name)
+			deploymentName := utils.GetDeploymentName(reviewApp, &desiredPr, deploymentSpec.Name)
 
 			var deployment = appsv1.Deployment{}
 			if err := c.Get(ctx, types.NamespacedName{

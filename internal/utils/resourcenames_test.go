@@ -37,6 +37,31 @@ var _ = Describe("Resource names", func() {
 		validate("feature/v1å[]", "feature-v1")
 		validate("86954rgpd_tillo-api-upgrade", "rgpd-tillo-api-upgrade")
 	})
+
+	It("Generates a valid deployment name", func() {
+		rac := func(n string) *ReviewAppConfig {
+			return &ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: n,
+				},
+			}
+		}
+
+		pr := func(n string) *PullRequest {
+			return &PullRequest{
+				Spec: PullRequestSpec{
+					BranchName: n,
+				},
+			}
+		}
+		Expect(GetDeploymentName(rac("reviewapp"), pr("branchname"), "deployment")).
+			To(Equal("reviewapp-deployment-branchname"))
+
+		Expect(GetDeploymentName(rac("reviewapp"), pr("superlongbranchname"+strings.Repeat("a", 100)), "staging")).
+			To(Equal("reviewapp-staging-superlongbranchnameaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+
+		Expect(GetDeploymentName(rac("rac"), pr("pr"), "")).To(Equal("rac-pr"))
+	})
 })
 
 var _ = Describe("Hostname templates", func() {
