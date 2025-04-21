@@ -23,7 +23,9 @@ import (
 )
 
 type Deployments struct {
-	Name                string `json:"name"`
+	// +optional
+	Name string `json:"name,omitempty"`
+
 	TargetContainerName string `json:"targetContainerName"`
 	TargetContainerPort int32  `json:"targetContainerPort"`
 
