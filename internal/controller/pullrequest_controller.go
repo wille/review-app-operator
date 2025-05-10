@@ -230,6 +230,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			replicas := *runningDeployment.Spec.Replicas
 			isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
 			if replicas == 0 {
+				// Only scale up if deployment is active and the user has not manually scaled the deployment
 				if isActive {
 					if deploymentSpec.Replicas != 0 {
 						replicas = deploymentSpec.Replicas
@@ -238,6 +239,7 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					}
 				}
 			} else if !isActive {
+				// Scale down if deployment is not active
 				replicas = 0
 			}
 

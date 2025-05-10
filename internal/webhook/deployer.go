@@ -115,6 +115,9 @@ func createOrUpdatePullRequest(
 		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", desiredPr.Spec.BranchName))
 	}
 
+	// Wait for the changes to the PullRequest to reconcile the Deployment before we start checking the status
+	time.Sleep(1 * time.Second)
+
 	attempts := 0
 	for {
 		finished := true
