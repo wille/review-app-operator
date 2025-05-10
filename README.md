@@ -29,7 +29,11 @@ See [values.yaml](/chart/values.yaml) for all available options
 
 ```yaml
 webhook:
-  secret: secret-string
+  # The webhook secret that will be used by the CI to trigger pull request events
+  # The secret will be created if it does not exist.
+  secretKeyRef:
+    name: webhook-secret
+    key: webhook-secret
   ingress:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt # Use cert-manager to issue a certificate for the webhook Ingress
@@ -41,7 +45,6 @@ forwarder:
       cert-manager.io/cluster-issuer: letsencrypt
     hosts:
       - "*.review-apps.example.com"
-scaleDownAfter: 1h # scale down a pull request deployment if inactive for this long
 ```
 
 > [!IMPORTANT]
@@ -101,10 +104,12 @@ Create this ReviewAppConfig
 >
 > Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
 
-## PullRequest example
+## PullRequest resource
 
 > [!IMPORTANT]
 > Pull requests are created and deleted automatically by the [Review App Action](https://github.com/wille/review-app-action) that runs your Github Actions `pull_request` workflows
+>
+> You can manually create PullRequest resources to test the operator
 
 ```yaml
 apiVersion: reviewapps.william.nu/v1alpha1
