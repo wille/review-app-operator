@@ -69,8 +69,10 @@ func getClusterDomain() string {
 	return "cluster.local"
 }
 
-var id = 0
+var requestID = 0
 
+// Very inefficient.
+// We should watch all PullRequest resources for changes and keep our own index of hostnames to service names.
 func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := fwd.Client
 
@@ -80,12 +82,11 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	id++
-	log := ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String(), "id", id)
+	requestID++
+	log := ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String(), "id", requestID)
 
 	if len(list.Items) == 0 {
 		// No deployments indexed for this host found
-		// TODO BETTER ERRORS
 		log.Info("No deployment found", "req", r.URL)
 		http.Error(w, fmt.Sprintf("No review app found for host %s", r.Host), http.StatusNotFound)
 		return
@@ -100,7 +101,17 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	pr := list.Items[0]
 
-	log = log.WithValues("deployment", pr.Name)
+	// Get the ReviewAppConfig for the PR so we can run utils.GetDeploymentName below
+	var reviewApp ReviewAppConfig
+	if err := c.Get(
+		r.Context(),
+		client.ObjectKey{Namespace: pr.Namespace, Name: pr.Spec.ReviewAppConfigRef},
+		&reviewApp,
+	); err != nil {
+		log.Error(err, "Error getting review app")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	doUpdate := false
 	patch := client.MergeFrom(pr.DeepCopy())
@@ -114,9 +125,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, hostname := range status.Hostnames {
 			if hostname == r.Host {
-
-				// TODO common function to get deployment
-				deploymentName = utils.GetResourceName(pr.Name, deploymentName2)
+				deploymentName = utils.GetDeploymentName(&reviewApp, &pr, deploymentName2)
 
 				target = fmt.Sprintf("%s.%s.svc.%s:%d", deploymentName, pr.Namespace, getClusterDomain(), 80)
 
@@ -137,6 +146,8 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	}
 
+	log = log.WithValues("deployment", deploymentName)
+
 	if doUpdate {
 		if err := c.Status().Patch(r.Context(), &pr, patch); err != nil {
 			log.Error(err, "Error updating deployment")
@@ -146,8 +157,6 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceHostname := target
-
-	// or := r.Clone(r.Context())
 
 	timeout, cancel := context.WithTimeout(r.Context(), fwd.ConnectionTimeout)
 	defer cancel()
@@ -181,6 +190,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}, &deployment); err != nil {
 				log.Error(err, "Waiting for deployment")
 				http.Error(w, "Waiting for deployment", http.StatusInternalServerError)
+				return
 			}
 			status, _, _ := utils.GetDeploymentStatus(&deployment)
 
