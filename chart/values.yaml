@@ -7,6 +7,7 @@ namespaces:
   - review-apps
 
 image: ghcr.io/wille/review-app-operator
+tag: ""
 
 webhook:
   replicas: 1

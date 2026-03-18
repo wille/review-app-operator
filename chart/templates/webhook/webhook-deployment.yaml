@@ -32,7 +32,7 @@ spec:
             secretKeyRef:
               name: {{ .Values.webhook.secretKeyRef.name }}
               key: {{ .Values.webhook.secretKeyRef.key }}
-        image: {{ .Values.image }}
+        image: {{ .Values.image }}:{{ .Values.tag | default .Chart.AppVersion }}
         livenessProbe:
           httpGet:
             path: /healthz

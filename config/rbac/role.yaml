@@ -5,24 +5,6 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments/status
-  verbs:
-  - get
-- apiGroups:
   - ""
   resources:
   - services
@@ -41,6 +23,24 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/status
+  verbs:
+  - get
+- apiGroups:
   - reviewapps.william.nu
   resources:
   - pullrequests
@@ -55,12 +55,14 @@ rules:
   - reviewapps.william.nu
   resources:
   - pullrequests/finalizers
+  - reviewconfigs/finalizers
   verbs:
   - update
 - apiGroups:
   - reviewapps.william.nu
   resources:
   - pullrequests/status
+  - reviewconfigs/status
   verbs:
   - get
   - patch
@@ -77,17 +79,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - reviewapps.william.nu
-  resources:
-  - reviewconfigs/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - reviewapps.william.nu
-  resources:
-  - reviewconfigs/status
-  verbs:
-  - get
-  - patch
-  - update

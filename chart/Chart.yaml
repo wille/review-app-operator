@@ -3,4 +3,4 @@ name: review-app-operator
 description: Review App Operator Helm chart
 type: application
 version: 0.0.1
-appVersion: "0.0.1"
+appVersion: v0.0.1
