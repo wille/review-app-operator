@@ -17,68 +17,81 @@ limitations under the License.
 package controller
 
 import (
-	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 var _ = Describe("ReviewAppConfig Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
-
-		ctx := context.Background()
+		const resourceName = "test-reviewapp"
+		const namespace = "default"
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: namespace,
 		}
-		reviewapp := &reviewapps.ReviewAppConfig{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ReviewAppConfig")
-			err := k8sClient.Get(ctx, typeNamespacedName, reviewapp)
+			reviewApp := &reviewapps.ReviewAppConfig{}
+			err := k8sClient.Get(ctx, typeNamespacedName, reviewApp)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &reviewapps.ReviewAppConfig{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: namespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: reviewapps.ReviewAppConfigSpec{
+						Deployments: []reviewapps.Deployments{
+							{
+								Name:                "web",
+								TargetContainerName: "app",
+								TargetContainerPort: 8080,
+								HostTemplates:       []string{"{{.BranchName}}.test.example.com"},
+								Template: corev1.PodTemplateSpec{
+									Spec: corev1.PodSpec{
+										Containers: []corev1.Container{
+											{
+												Name:  "app",
+												Image: "nginx:latest",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &reviewapps.ReviewAppConfig{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance ReviewAppConfig")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &ReviewAppConfigReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+			if err := k8sClient.Get(ctx, typeNamespacedName, resource); err == nil {
+				By("Cleanup the specific resource instance ReviewAppConfig")
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				Eventually(func() bool {
+					return errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &reviewapps.ReviewAppConfig{}))
+				}, 10*time.Second, 250*time.Millisecond).Should(BeTrue())
 			}
+		})
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		It("should add a finalizer to the ReviewAppConfig", func() {
+			Eventually(func(g Gomega) {
+				reviewApp := &reviewapps.ReviewAppConfig{}
+				g.Expect(k8sClient.Get(ctx, typeNamespacedName, reviewApp)).To(Succeed())
+				g.Expect(controllerutil.ContainsFinalizer(reviewApp, "reviewapp.william.nu/finalizer")).To(BeTrue())
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 		})
 	})
 })
