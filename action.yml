@@ -1,0 +1,33 @@
+name: Review App Operator Action
+
+author: wille
+branding:
+  icon: anchor
+  color: blue
+
+description: Deploy review apps to Kubernetes using Github Actions and Review App Operator
+inputs:
+  review_app_name:
+    description: The name of the Kubernetes Review App
+    required: true
+  review_app_namespace:
+    description: The namespace of the Kubernetes Review App
+    required: false
+    default: default
+  webhook_url:
+    description: The target webhook URL
+    required: true
+  webhook_secret:
+    description: The webhook secret
+    required: true
+  image:
+    description: The new Docker Image to deploy
+    required: false
+
+outputs:
+  review_app_url:
+    description: The URL of the review app
+
+runs:
+  using: docker
+  image: Dockerfile.action
