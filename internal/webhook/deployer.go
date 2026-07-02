@@ -87,26 +87,42 @@ func createOrUpdatePullRequest(
 			return nil, err
 		}
 	} else {
-		patch := client.MergeFrom(existingPr.DeepCopy())
+		// Patch spec and labels without touching the status subresource so we
+		// don't clobber controller-maintained fields such as the hostnames the
+		// forwarder's host index depends on.
+		specPatch := client.MergeFrom(existingPr.DeepCopy())
 
 		existingPr.ObjectMeta.Labels = desiredPr.ObjectMeta.Labels
 		existingPr.Spec = desiredPr.Spec
-		existingPr.Status = desiredPr.Status
 
 		// Update the PullRequest if it is found
-		if err := c.Patch(ctx, &existingPr, patch); err != nil {
+		if err := c.Patch(ctx, &existingPr, specPatch); err != nil {
 			log.Error(err, "Error updating pull request", "name", key.Name)
 			return nil, err
 		}
 
+		// Bump activity on the existing status, preserving the hostnames and any
+		// other status set by the controller.
+		statusPatch := client.MergeFrom(existingPr.DeepCopy())
+
+		if existingPr.Status.Deployments == nil {
+			existingPr.Status.Deployments = make(map[string]*DeploymentStatus)
+		}
+
 		for _, deployment := range reviewApp.Spec.Deployments {
-			existingPr.Status.Deployments[deployment.Name].LastActive = metav1.Now()
-			if !existingPr.Status.Deployments[deployment.Name].IsActive {
-				existingPr.Status.Deployments[deployment.Name].IsActive = deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy
+			status := existingPr.Status.Deployments[deployment.Name]
+			if status == nil {
+				status = &DeploymentStatus{}
+				existingPr.Status.Deployments[deployment.Name] = status
+			}
+
+			status.LastActive = metav1.Now()
+			if !status.IsActive {
+				status.IsActive = deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy
 			}
 		}
 
-		if err := c.Status().Patch(ctx, &existingPr, patch); err != nil {
+		if err := c.Status().Patch(ctx, &existingPr, statusPatch); err != nil {
 			log.Error(err, "Failed to update status")
 			return nil, err
 		}
