@@ -39,6 +39,7 @@ type Deployments struct {
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
 	// HostTemplates must contain at least {{.BranchName}}
+	// +kubebuilder:validation:MinItems=1
 	HostTemplates []string `json:"hostTemplates"`
 
 	// generateEmbeddedObjectMeta must be set for this to work
@@ -63,6 +64,7 @@ type ReviewAppConfigSpec struct {
 	// +optional
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
+	// +kubebuilder:validation:MinItems=1
 	Deployments []Deployments `json:"deployments"`
 }
 

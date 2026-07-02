@@ -36,6 +36,7 @@ spec:
                     hostTemplates:
                       items:
                         type: string
+                      minItems: 1
                       type: array
                     minReadySeconds:
                       format: int32
@@ -3906,6 +3907,7 @@ spec:
                   - targetContainerPort
                   - template
                   type: object
+                minItems: 1
                 type: array
               scaleDownAfter:
                 type: string
