@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -75,8 +74,11 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 		srv.Shutdown(ctx)
 	}()
 
-	// TODO will error when closed
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+
+	return nil
 }
 
 // maxWebhookBodyBytes is the maximum size of a webhook request body we are
@@ -95,7 +97,6 @@ func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(nil))
 
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-		fmt.Printf("Invalid signature %s, expected=%s\n", signature, expectedSignature)
 		return errors.New("Invalid signature")
 	}
 
@@ -173,6 +174,15 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case http.MethodPost:
 		log.Info("Create webhook received", "webhook", webhook)
+
+		// The ReviewAppConfig must define at least one deployment with at least
+		// one host template before we can deploy and report back a URL.
+		if len(reviewApp.Spec.Deployments) == 0 || len(reviewApp.Spec.Deployments[0].HostTemplates) == 0 {
+			err := errors.New("ReviewAppConfig has no deployments or host templates configured")
+			log.Error(err, "Invalid ReviewAppConfig", "name", reviewApp.Name)
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 
 		pr, err := createOrUpdatePullRequest(
 			r.Context(),

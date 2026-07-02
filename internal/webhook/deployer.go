@@ -48,8 +48,6 @@ func createOrUpdatePullRequest(
 		Name:      desiredPr.Name,
 	}
 
-	fmt.Println("Desired PR labels:", desiredPr.ObjectMeta.Labels, "___", reviewApp.ObjectMeta.Labels)
-
 	for _, deployment := range reviewApp.Spec.Deployments {
 		for _, container := range deployment.Template.Spec.Containers {
 			// The image repo and name defined in the ReviewAppConfig must match the deployed image
