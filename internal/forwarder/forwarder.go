@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -70,6 +71,15 @@ func getClusterDomain() string {
 }
 
 var requestID = 0
+
+// httpClient is shared across all proxied requests so that connections to the
+// upstream review app services can be reused, and so retried requests re-send
+// a freshly built request rather than the already-drained inbound one.
+var httpClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // Very inefficient.
 // We should watch all PullRequest resources for changes and keep our own index of hostnames to service names.
@@ -176,6 +186,21 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set("X-Branch", pr.Labels["app.kubernetes.io/name"])
 	r.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
 
+	// Buffer the request body so that it can be re-sent on each connection
+	// attempt while we wait for the review app to scale up. Without this, a
+	// retried request (the common cold-start path) would forward an empty body.
+	var bodyBytes []byte
+	if r.Body != nil {
+		b, err := io.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			log.Error(err, "Error reading request body")
+			http.Error(w, "Error reading request body", http.StatusBadRequest)
+			return
+		}
+		bodyBytes = b
+	}
+
 	attempt := 0
 
 	for {
@@ -218,13 +243,17 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		default:
 		}
-		client := &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+
+		// Build a fresh outbound request for every attempt with its own body
+		// reader so retries re-send the buffered body.
+		outReq := r.Clone(r.Context())
+		outReq.RequestURI = ""
+		if bodyBytes != nil {
+			outReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			outReq.ContentLength = int64(len(bodyBytes))
 		}
 
-		resp, err := client.Do(r)
+		resp, err := httpClient.Do(outReq)
 		if err != nil {
 			if attempt%5 == 0 {
 				var deployment appsv1.Deployment
