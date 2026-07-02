@@ -79,6 +79,10 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 	return srv.ListenAndServe()
 }
 
+// maxWebhookBodyBytes is the maximum size of a webhook request body we are
+// willing to buffer before authenticating the request.
+const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
 
@@ -100,7 +104,7 @@ func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 
 func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes))
 
 	w.Header().Set("Accept", "application/json")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
