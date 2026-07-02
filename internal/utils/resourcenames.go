@@ -10,6 +10,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
+var (
+	// Characters that are not allowed at all in a normalized name.
+	reDisallowed = regexp.MustCompile(`[^a-z0-9\- /_.]+`)
+	// Separator characters that collapse into a single dash.
+	reSeparators = regexp.MustCompile(`[-/_.]+`)
+	// Leading characters that are not lowercase letters (DNS1035 / label values).
+	reLeading = regexp.MustCompile(`^[^a-z]+`)
+	// Trailing characters that are not alphanumeric (DNS1123 / DNS1035).
+	reTrailing = regexp.MustCompile(`[^a-z0-9]+$`)
+)
+
 func isAlpha(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
@@ -27,15 +38,15 @@ func isAlphanumeric(c rune) bool {
 func normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
-	s = regexp.MustCompile("[^a-z0-9\\- /_.]+").ReplaceAllString(s, "")
-	s = regexp.MustCompile("/_.").ReplaceAllString(s, "-")
-	s = regexp.MustCompile("[-/_.]+").ReplaceAllString(s, "-")
+	s = reDisallowed.ReplaceAllString(s, "")
+	// Collapse any run of separator characters into a single dash
+	s = reSeparators.ReplaceAllString(s, "-")
 
 	// Only allow leading a-z to comply with DNS1035 for Service names and label values
-	s = regexp.MustCompile("^[^a-z]+").ReplaceAllString(s, "")
+	s = reLeading.ReplaceAllString(s, "")
 
 	// Only allow trailing alphanumeric characters to comply with DNS1123 and DNS1035
-	s = regexp.MustCompile("[^a-z0-9]+$").ReplaceAllString(s, "")
+	s = reTrailing.ReplaceAllString(s, "")
 
 	if len(s) > validation.DNS1123LabelMaxLength {
 		s = normalize(s[:validation.DNS1123LabelMaxLength])
