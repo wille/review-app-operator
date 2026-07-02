@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/wille/review-app-operator/api/v1alpha1"
@@ -70,30 +71,29 @@ func getClusterDomain() string {
 	return "cluster.local"
 }
 
-var requestID = 0
+var requestID int64
 
 // httpClient is shared across all proxied requests so that connections to the
-// upstream review app services can be reused, and so retried requests re-send
-// a freshly built request rather than the already-drained inbound one.
+// upstream review app services can be reused.
 var httpClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
 }
 
-// Very inefficient.
-// We should watch all PullRequest resources for changes and keep our own index of hostnames to service names.
 func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := fwd.Client
 
 	// List all deployments indexed by the host
 	var list PullRequestList
 	if err := c.List(r.Context(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
-		panic(err)
+		ctrl.Log.WithName("forwarder").Error(err, "Error listing pull requests", "host", r.Host)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
-	requestID++
-	log := ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String(), "id", requestID)
+	reqID := atomic.AddInt64(&requestID, 1)
+	log := ctrl.Log.WithName("forwarder").WithValues("host", r.Host, "request", r.Method+" "+r.URL.String(), "id", reqID)
 
 	if len(list.Items) == 0 {
 		// No deployments indexed for this host found
@@ -310,6 +310,9 @@ func (fw Forwarder) Start(ctx context.Context) error {
 		srv.Shutdown(ctx)
 	}()
 
-	// TODO will error when closed
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+
+	return nil
 }
