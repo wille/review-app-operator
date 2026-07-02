@@ -13,6 +13,12 @@ var MatchingLabels = client.MatchingLabels{"app.kubernetes.io/managed-by": "revi
 // HostIndexFieldName is the field indexes on Services to store the hostnames they are active for
 const HostIndexFieldName = ".hosts"
 
+// ReviewAppRefField is the field index on PullRequest resources keyed by
+// .spec.reviewAppRef, used to look up all PullRequests belonging to a
+// ReviewAppConfig. It is the single source of truth for that relationship
+// (set at creation time), so it works before the controller takes ownership.
+const ReviewAppRefField = ".spec.reviewAppRef"
+
 // GetSelectorLabels returns selector labels to be used with pod selectors in Services and Deployments
 func GetSelectorLabels(reviewApp *ReviewAppConfig, pr PullRequest, deploymentName string) map[string]string {
 	instance := GetResourceName(reviewApp.Name, pr.Spec.BranchName)

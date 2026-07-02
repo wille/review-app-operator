@@ -22,7 +22,6 @@ import (
 	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -88,42 +87,13 @@ func (r *ReviewAppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	// var s keda.ScaledObject
-	// log.Info(s)
-	var list reviewapps.PullRequestList
-	if err := r.List(ctx, &list, client.InNamespace(req.Namespace), client.MatchingFields{"spec.reviewAppRef": req.Name}); err != nil {
-		log.Error(err, "unable to list child Jobs")
-		return ctrl.Result{}, err
-	}
-
-	// if err := r.Status().Update(ctx, reviewApp); err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ReviewAppConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, "spec.reviewAppRef", func(rawObj client.Object) []string {
-		// grab the job object, extract the owner...
-		job := rawObj.(*reviewapps.PullRequest)
-		owner := metav1.GetControllerOf(job)
-		if owner == nil {
-			return nil
-		}
-		// ...make sure it's a CronJob...
-		// TODO check APIVERSION!
-		if owner.Kind != "ReviewAppConfig" {
-			return nil
-		}
-
-		// ...and if so, return it
-		return []string{owner.Name}
-	}); err != nil {
-		return err
-	}
-
+	// The .spec.reviewAppRef index used to look up PullRequests belonging to a
+	// ReviewAppConfig is registered by the PullRequest controller.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&reviewapps.ReviewAppConfig{}).
 		Owns(&reviewapps.PullRequest{}).

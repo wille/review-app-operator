@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,7 +53,7 @@ func (ds Downscaler) run(ctx context.Context) {
 
 	for _, reviewApp := range list.Items {
 		var prs PullRequestList
-		if err := ds.Client.List(ctx, &prs, client.MatchingFields{"spec.reviewAppRef": reviewApp.Name}); err != nil {
+		if err := ds.Client.List(ctx, &prs, client.MatchingFields{utils.ReviewAppRefField: reviewApp.Name}); err != nil {
 			log.Error(err, "Failed to list pull requests for review app", "reviewApp", reviewApp.Name)
 			break
 		}

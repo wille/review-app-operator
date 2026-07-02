@@ -44,7 +44,6 @@ import (
 )
 
 const (
-	reviewAppRefField   = ".spec.reviewAppRef"
 	pullRequestOwnerKey = ".metadata.controller"
 )
 
@@ -374,7 +373,7 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	// Index PullRequest resources based on .spec.reviewAppRef
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, reviewAppRefField, func(rawObj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, utils.ReviewAppRefField, func(rawObj client.Object) []string {
 		configDeployment := rawObj.(*reviewapps.PullRequest)
 		if configDeployment.Spec.ReviewAppConfigRef == "" {
 			return nil
@@ -420,7 +419,7 @@ func SetupHostIndex(mgr ctrl.Manager) error {
 func (r *PullRequestReconciler) findPullRequestsForReviewAppConfig(ctx context.Context, reviewApp client.Object) []reconcile.Request {
 	var prs reviewapps.PullRequestList
 	err := r.List(ctx, &prs, &client.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector(reviewAppRefField, reviewApp.GetName()),
+		FieldSelector: fields.OneTermEqualSelector(utils.ReviewAppRefField, reviewApp.GetName()),
 		Namespace:     reviewApp.GetNamespace(),
 	})
 	if err != nil {
