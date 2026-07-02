@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/wille/review-app-operator/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +85,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := fwd.Client
 
 	// List all deployments indexed by the host
-	var list PullRequestList
+	var list reviewapps.PullRequestList
 	if err := c.List(r.Context(), &list, client.MatchingFields{utils.HostIndexFieldName: r.Host}); err != nil {
 		ctrl.Log.WithName("forwarder").Error(err, "Error listing pull requests", "host", r.Host)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -112,7 +112,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pr := list.Items[0]
 
 	// Get the ReviewAppConfig for the PR so we can run utils.GetDeploymentName below
-	var reviewApp ReviewAppConfig
+	var reviewApp reviewapps.ReviewAppConfig
 	if err := c.Get(
 		r.Context(),
 		client.ObjectKey{Namespace: pr.Namespace, Name: pr.Spec.ReviewAppConfigRef},
@@ -192,7 +192,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var bodyBytes []byte
 	if r.Body != nil {
 		b, err := io.ReadAll(r.Body)
-		r.Body.Close()
+		_ = r.Body.Close()
 		if err != nil {
 			log.Error(err, "Error reading request body")
 			http.Error(w, "Error reading request body", http.StatusBadRequest)
@@ -226,7 +226,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.WriteHeader(http.StatusAccepted)
-			fmt.Fprintf(w, `<html>
+			_, _ = fmt.Fprintf(w, `<html>
 			<head>
 				<title>Loading...</title>
 				<meta http-equiv="refresh" content="5">
@@ -276,7 +276,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(time.Second)
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		delHopHeaders(resp.Header)
 
@@ -307,7 +307,7 @@ func (fw Forwarder) Start(ctx context.Context) error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

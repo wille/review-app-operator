@@ -71,7 +71,7 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -97,14 +97,14 @@ func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	expectedSignature := "sha256=" + hex.EncodeToString(_hmac.Sum(nil))
 
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-		return errors.New("Invalid signature")
+		return errors.New("invalid signature")
 	}
 
 	return nil
 }
 
 func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes))
 
 	w.Header().Set("Accept", "application/json")
@@ -129,7 +129,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reviewApp := reviewapps.ReviewAppConfig{}
-	if err := wh.Client.Get(context.TODO(), types.NamespacedName{
+	if err := wh.Get(context.TODO(), types.NamespacedName{
 		Name:      webhook.ReviewAppConfigName,
 		Namespace: webhook.ReviewAppConfigNamespace,
 	}, &reviewApp); err != nil {
@@ -220,7 +220,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Since the response is streamed to the Github Action so you can follow progress
 		// in real time, we just stream status text and finish with a `Review App URL: <url>`
 		// that is parsed by the action
-		w.Write([]byte("Review App URL: " + deploymentUrl))
+		_, _ = w.Write([]byte("Review App URL: " + deploymentUrl))
 		return
 	default:
 		w.Header().Set("Allow", "POST, DELETE")

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/wille/review-app-operator/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -20,14 +20,6 @@ var (
 	// Trailing characters that are not alphanumeric (DNS1123 / DNS1035).
 	reTrailing = regexp.MustCompile(`[^a-z0-9]+$`)
 )
-
-func isAlpha(c rune) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-}
-
-func isAlphanumeric(c rune) bool {
-	return isAlpha(c) || (c >= '0' && c <= '9')
-}
 
 // Normalizes a resource name or label value.
 // Different Kubernetes resources has different name restrictions,
@@ -60,9 +52,9 @@ func normalize(s string) string {
 // - {{.ReviewAppConfig}}
 // - {{.BranchName}}
 // - {{.DeploymentName}}
-func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequest, reviewApp ReviewAppConfig) (string, error) {
+func GetHostnameFromTemplate(template string, deploymentName string, pr reviewapps.PullRequest, reviewApp reviewapps.ReviewAppConfig) (string, error) {
 	if !strings.Contains(template, "{{.BranchName}}") {
-		return "", fmt.Errorf("Template %s does not contain {{.BranchName}}", template)
+		return "", fmt.Errorf("template %s does not contain {{.BranchName}}", template)
 	}
 
 	// Uses go template syntax
@@ -77,7 +69,7 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequ
 	label = strings.TrimSuffix(label, ".")
 
 	if domain == "" {
-		return "", fmt.Errorf("No domain in %s", s)
+		return "", fmt.Errorf("no domain in %s", s)
 	}
 
 	// Try to cut the long dns label to a valid length
@@ -95,7 +87,7 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr PullRequ
 }
 
 // GetHostnamesFromTemplate returns a list of interpolated hostname templates for a a given deployment, pr and review app
-func GetHostnamesFromTemplate(templates []string, deploymentName string, pr PullRequest, reviewApp ReviewAppConfig) ([]string, error) {
+func GetHostnamesFromTemplate(templates []string, deploymentName string, pr reviewapps.PullRequest, reviewApp reviewapps.ReviewAppConfig) ([]string, error) {
 	hosts := []string{}
 
 	for _, template := range templates {
@@ -118,10 +110,10 @@ func GetResourceName(name ...string) string {
 }
 
 // GetChildResourceName returns a child resource name for a reviewapp and pull request
-func GetChildResourceName(reviewApp *ReviewAppConfig, pr *PullRequest) string {
+func GetChildResourceName(reviewApp *reviewapps.ReviewAppConfig, pr *reviewapps.PullRequest) string {
 	return GetResourceName(reviewApp.Name, pr.Spec.BranchName)
 }
 
-func GetDeploymentName(reviewApp *ReviewAppConfig, pr *PullRequest, deploymentName string) string {
+func GetDeploymentName(reviewApp *reviewapps.ReviewAppConfig, pr *reviewapps.PullRequest, deploymentName string) string {
 	return GetResourceName(reviewApp.Name, deploymentName, pr.Spec.BranchName)
 }

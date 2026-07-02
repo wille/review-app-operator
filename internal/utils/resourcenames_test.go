@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	. "github.com/wille/review-app-operator/api/v1alpha1"
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
+	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -22,8 +22,8 @@ var _ = Describe("Resource names", func() {
 	validate := func(s, expected string) {
 		n := normalize(s)
 		Expect(n).To(Equal(expected))
-		Expect(validation.IsDNS1035Label(n)).To(HaveLen(0))
-		Expect(validation.IsDNS1123Label(n)).To(HaveLen(0))
+		Expect(validation.IsDNS1035Label(n)).To(BeEmpty())
+		Expect(validation.IsDNS1123Label(n)).To(BeEmpty())
 	}
 	It("Generates valid resource names, service names and label values", func() {
 		validate("dependabot/npm_and_yarn/mongodb-4.17.0", "dependabot-npm-and-yarn-mongodb-4-17-0")
@@ -39,17 +39,17 @@ var _ = Describe("Resource names", func() {
 	})
 
 	It("Generates a valid deployment name", func() {
-		rac := func(n string) *ReviewAppConfig {
-			return &ReviewAppConfig{
+		rac := func(n string) *reviewapps.ReviewAppConfig {
+			return &reviewapps.ReviewAppConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: n,
 				},
 			}
 		}
 
-		pr := func(n string) *PullRequest {
-			return &PullRequest{
-				Spec: PullRequestSpec{
+		pr := func(n string) *reviewapps.PullRequest {
+			return &reviewapps.PullRequest{
+				Spec: reviewapps.PullRequestSpec{
 					BranchName: n,
 				},
 			}
@@ -65,16 +65,16 @@ var _ = Describe("Resource names", func() {
 })
 
 var _ = Describe("Hostname templates", func() {
-	pr := PullRequest{
-		Spec: PullRequestSpec{
+	pr := reviewapps.PullRequest{
+		Spec: reviewapps.PullRequestSpec{
 			BranchName: "feature/v1å[]",
 		},
 	}
-	reviewApp := ReviewAppConfig{
+	reviewApp := reviewapps.ReviewAppConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "review-sample",
 		},
-		Spec: ReviewAppConfigSpec{},
+		Spec: reviewapps.ReviewAppConfigSpec{},
 	}
 	deploymentName := "nginx"
 
@@ -84,6 +84,6 @@ var _ = Describe("Hostname templates", func() {
 		Expect(GetHostnameFromTemplate("{{.ReviewAppConfig}}-{{.BranchName}}-{{.DeploymentName}}.review.example.com", deploymentName, pr, reviewApp)).To(Equal("review-sample-feature-v1-nginx.review.example.com"))
 
 		long, _ := GetHostnameFromTemplate("{{.BranchName}}-"+strings.Repeat("a", validation.DNS1123LabelMaxLength)+".example.com", deploymentName, pr, reviewApp)
-		Expect(validation.IsDNS1123Subdomain(long)).To(HaveLen(0))
+		Expect(validation.IsDNS1123Subdomain(long)).To(BeEmpty())
 	})
 })

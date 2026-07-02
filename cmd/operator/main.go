@@ -65,7 +65,7 @@ func main() {
 	}
 	flag.Func("namespaces", "Namespaces", func(ns string) error {
 		if ns == "" {
-			return errors.New("No namespaces set")
+			return errors.New("no namespaces set")
 		}
 		for _, ns := range strings.Split(ns, ",") {
 			cacheOpts.DefaultNamespaces[ns] = cache.Config{}
@@ -183,14 +183,24 @@ func main() {
 	}
 
 	if enableDeployWebhook {
-		if err := mgr.Add(webhooks.WebhookServer{Client: mgr.GetClient(), Addr: ":8080", WebhookSecret: webhookSecret}); err != nil {
+		deployWebhook := webhooks.WebhookServer{
+			Client:        mgr.GetClient(),
+			Addr:          ":8080",
+			WebhookSecret: webhookSecret,
+		}
+		if err := mgr.Add(deployWebhook); err != nil {
 			setupLog.Error(err, "unable to create pull request webhook server")
 			os.Exit(1)
 		}
 	}
 
 	if enableForwarder {
-		if err := mgr.Add(forwarder.Forwarder{Client: mgr.GetClient(), Addr: ":6969", ConnectionTimeout: connectionTimeout}); err != nil {
+		fwd := forwarder.Forwarder{
+			Client:            mgr.GetClient(),
+			Addr:              ":6969",
+			ConnectionTimeout: connectionTimeout,
+		}
+		if err := mgr.Add(fwd); err != nil {
 			setupLog.Error(err, "unable to setup the forwarding proxy")
 			os.Exit(1)
 		}

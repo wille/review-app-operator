@@ -22,6 +22,12 @@ linters:
     - unconvert
     - unparam
     - unused
+  settings:
+    misspell:
+      # "wille" is the maintainer's GitHub username in the module path, not a
+      # misspelling of "will".
+      ignore-rules:
+        - wille
   exclusions:
     presets:
       - comments

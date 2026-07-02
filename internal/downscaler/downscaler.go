@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	. "github.com/wille/review-app-operator/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -45,15 +45,15 @@ func (ds Downscaler) Start(ctx context.Context) error {
 
 func (ds Downscaler) run(ctx context.Context) {
 	// List all deployments owned by the Review App Operator
-	var list ReviewAppConfigList
-	if err := ds.Client.List(ctx, &list); err != nil {
+	var list reviewapps.ReviewAppConfigList
+	if err := ds.List(ctx, &list); err != nil {
 		log.Error(err, "Failed to list review apps")
 		return
 	}
 
 	for _, reviewApp := range list.Items {
-		var prs PullRequestList
-		if err := ds.Client.List(ctx, &prs, client.MatchingFields{utils.ReviewAppRefField: reviewApp.Name}); err != nil {
+		var prs reviewapps.PullRequestList
+		if err := ds.List(ctx, &prs, client.MatchingFields{utils.ReviewAppRefField: reviewApp.Name}); err != nil {
 			log.Error(err, "Failed to list pull requests for review app", "reviewApp", reviewApp.Name)
 			break
 		}
@@ -64,7 +64,7 @@ func (ds Downscaler) run(ctx context.Context) {
 	}
 }
 
-func (ds Downscaler) process(reviewApp ReviewAppConfig, pr PullRequest, ctx context.Context) {
+func (ds Downscaler) process(reviewApp reviewapps.ReviewAppConfig, pr reviewapps.PullRequest, ctx context.Context) {
 	for deploymentName, status := range pr.Status.Deployments {
 		if !status.IsActive {
 			continue

@@ -53,7 +53,7 @@ func (r *ReviewAppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	finalizerName := "reviewapp.william.nu/finalizer"
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if reviewApp.ObjectMeta.DeletionTimestamp.IsZero() {
+	if reviewApp.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.

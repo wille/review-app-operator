@@ -3,7 +3,7 @@ package utils
 import (
 	"strings"
 
-	. "github.com/wille/review-app-operator/api/v1alpha1"
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 // IsSameImageRepo checks if two image names and tags are from the same repository
@@ -22,7 +22,7 @@ func ImageHasDigest(image string) bool {
 }
 
 // IsImageAllowed checks if the image matches the base image set on the deployments in a ReviewAppConfig
-func IsImageAllowed(reviewApp ReviewAppConfig, image string) bool {
+func IsImageAllowed(reviewApp reviewapps.ReviewAppConfig, image string) bool {
 	for _, d := range reviewApp.Spec.Deployments {
 		for _, c := range d.Template.Spec.Containers {
 			if d.TargetContainerName == c.Name &&

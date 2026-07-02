@@ -111,8 +111,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 			// If the deployment name or selector labels does not match, then we need to recreate the deployment as the selector labels are immutable
 			// This should not happen as the selector labels are derived from the PullRequest and ReviewAppConfig but guard anyways against having stale deployments
-			if runningDeployment.ObjectMeta.Name == deploymentName &&
-				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.ObjectMeta.Labels) {
+			if runningDeployment.Name == deploymentName &&
+				equality.Semantic.DeepDerivative(selectorLabels, runningDeployment.Labels) {
 				found = true
 				break
 			}
@@ -135,178 +135,8 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Loop all desired deployments in the ReviewAppConfig spec
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		deploymentName := utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name)
-
-		// Desired labels for all subresources, including all labels set on the ReviewAppConfig
-		desiredLabels := utils.GetResourceLabels(&reviewApp, *pr, deploymentSpec.Name)
-
-		// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
-		// so selectorLabels does not include user labels
-		selectorLabels := utils.GetSelectorLabels(&reviewApp, *pr, deploymentSpec.Name)
-
-		objectMeta := metav1.ObjectMeta{
-			Name:        deploymentName,
-			Labels:      desiredLabels,
-			Namespace:   reviewApp.Namespace,
-			Annotations: make(map[string]string),
-		}
-
-		// Merge pod template labels with the ReviewAppConfig labels
-		podTemplate := deploymentSpec.Template.DeepCopy()
-		if podTemplate.ObjectMeta.Labels == nil {
-			podTemplate.ObjectMeta.Labels = make(map[string]string)
-		}
-		maps.Copy(podTemplate.ObjectMeta.Labels, objectMeta.Labels)
-
-		desiredDeployment := &appsv1.Deployment{
-			ObjectMeta: *objectMeta.DeepCopy(),
-			Spec: appsv1.DeploymentSpec{
-				Selector: &metav1.LabelSelector{
-					MatchLabels: selectorLabels,
-				},
-				Replicas:                &deploymentSpec.Replicas,
-				Template:                *podTemplate,
-				Strategy:                deploymentSpec.Strategy,
-				MinReadySeconds:         deploymentSpec.MinReadySeconds,
-				ProgressDeadlineSeconds: deploymentSpec.ProgressDeadlineSeconds,
-			},
-		}
-
-		// Get the hostnames for this deployment
-		hostnames, err := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, reviewApp)
-		if err != nil {
+		if err := r.reconcileDeployment(ctx, &reviewApp, pr, deploymentSpec); err != nil {
 			return ctrl.Result{}, err
-		}
-
-		if pr.Status.Deployments[deploymentSpec.Name] == nil {
-			pr.Status.Deployments[deploymentSpec.Name] = &reviewapps.DeploymentStatus{
-				LastActive: metav1.Now(),
-				IsActive:   deploymentSpec.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
-			}
-		}
-
-		pr.Status.Deployments[deploymentSpec.Name].Hostnames = hostnames
-
-		var runningDeployment appsv1.Deployment
-		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
-
-			if err := ctrl.SetControllerReference(pr, desiredDeployment, r.Scheme); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
-
-			// Pull request was created and is active, scale it up
-			if pr.Status.Deployments[deploymentSpec.Name].IsActive {
-				if deploymentSpec.Replicas == 0 {
-					*desiredDeployment.Spec.Replicas = 1
-				} else {
-					*desiredDeployment.Spec.Replicas = deploymentSpec.Replicas
-				}
-			}
-
-			if err := r.Create(ctx, desiredDeployment); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Deployment created", "deploymentName", deploymentName)
-		} else {
-			patch := client.MergeFrom(runningDeployment.DeepCopy())
-
-			// Update the target container image with the latest PR image if any is set on the PullRequest
-			updatedImage := false
-			if pr.Spec.ImageName != "" {
-				updatedImage = updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
-
-				if updatedImage {
-					log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
-				}
-			}
-
-			replicas := *runningDeployment.Spec.Replicas
-			isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
-			if replicas == 0 {
-				// Only scale up if deployment is active and the user has not manually scaled the deployment
-				if isActive {
-					if deploymentSpec.Replicas != 0 {
-						replicas = deploymentSpec.Replicas
-					} else {
-						replicas = 1
-					}
-				}
-			} else if !isActive {
-				// Scale down if deployment is not active
-				replicas = 0
-			}
-
-			// If the deployment spec in the ReviewAppConfig gets updated we do not update the deployment
-			// The deployment needs to be manually deleted.
-			if updatedImage ||
-				*runningDeployment.Spec.Replicas != replicas ||
-				!equality.Semantic.DeepDerivative(desiredDeployment.ObjectMeta.Labels, runningDeployment.ObjectMeta.Labels) {
-
-				runningDeployment.Spec.Replicas = &replicas
-				runningDeployment.ObjectMeta.Labels = desiredLabels
-
-				if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
-					return ctrl.Result{}, err
-				}
-
-				log.Info("Deployment updated", "deploymentName", deploymentName)
-			}
-		}
-
-		desiredSvc := &corev1.Service{
-			ObjectMeta: *objectMeta.DeepCopy(),
-			Spec: corev1.ServiceSpec{
-				Selector: selectorLabels,
-				Type:     corev1.ServiceTypeClusterIP,
-				Ports: []corev1.ServicePort{
-					{
-						Name: "http",
-
-						// Always use port 80, the forwarder assumes this as well
-						Port:       80,
-						TargetPort: intstr.FromInt(int(deploymentSpec.TargetContainerPort)),
-					},
-				},
-			},
-		}
-
-		// If a .spec.deployment.name changes, the old service will not be cleaned up
-		var activeSvc corev1.Service
-		if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &activeSvc); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
-
-			if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			if err := r.Create(ctx, desiredSvc); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Service created", "serviceName", deploymentName)
-		} else {
-			// Service labels or spec differs from desired spec
-			if !equality.Semantic.DeepDerivative(desiredSvc.Spec, activeSvc.Spec) ||
-				!equality.Semantic.DeepDerivative(desiredSvc.ObjectMeta.Labels, activeSvc.ObjectMeta.Labels) {
-				patch := client.MergeFrom(activeSvc.DeepCopy())
-
-				activeSvc.ObjectMeta.Labels = desiredSvc.ObjectMeta.Labels
-				activeSvc.Spec = desiredSvc.Spec
-
-				if err := r.Patch(ctx, &activeSvc, patch); err != nil {
-					return ctrl.Result{}, err
-				}
-
-				log.Info("Service updated", "serviceName", deploymentName)
-			}
 		}
 	}
 
@@ -317,6 +147,212 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// reconcileDeployment ensures the Deployment and its Service for a single
+// ReviewAppConfig deployment spec exist and match the desired state, and
+// records the deployment's hostnames on the PullRequest status.
+func (r *PullRequestReconciler) reconcileDeployment(
+	ctx context.Context,
+	reviewApp *reviewapps.ReviewAppConfig,
+	pr *reviewapps.PullRequest,
+	deploymentSpec reviewapps.Deployments,
+) error {
+	log := log.FromContext(ctx)
+
+	deploymentName := utils.GetDeploymentName(reviewApp, pr, deploymentSpec.Name)
+
+	// Desired labels for all subresources, including all labels set on the ReviewAppConfig
+	desiredLabels := utils.GetResourceLabels(reviewApp, *pr, deploymentSpec.Name)
+
+	// PodSpec.Selector is immutable, so we need to recreate the Deployment if labels change
+	// so selectorLabels does not include user labels
+	selectorLabels := utils.GetSelectorLabels(reviewApp, *pr, deploymentSpec.Name)
+
+	objectMeta := metav1.ObjectMeta{
+		Name:        deploymentName,
+		Labels:      desiredLabels,
+		Namespace:   reviewApp.Namespace,
+		Annotations: make(map[string]string),
+	}
+
+	// Merge pod template labels with the ReviewAppConfig labels
+	podTemplate := deploymentSpec.Template.DeepCopy()
+	if podTemplate.Labels == nil {
+		podTemplate.Labels = make(map[string]string)
+	}
+	maps.Copy(podTemplate.Labels, objectMeta.Labels)
+
+	desiredDeployment := &appsv1.Deployment{
+		ObjectMeta: *objectMeta.DeepCopy(),
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: selectorLabels,
+			},
+			Replicas:                &deploymentSpec.Replicas,
+			Template:                *podTemplate,
+			Strategy:                deploymentSpec.Strategy,
+			MinReadySeconds:         deploymentSpec.MinReadySeconds,
+			ProgressDeadlineSeconds: deploymentSpec.ProgressDeadlineSeconds,
+		},
+	}
+
+	// Get the hostnames for this deployment
+	hostnames, err := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, *reviewApp)
+	if err != nil {
+		return err
+	}
+
+	if pr.Status.Deployments[deploymentSpec.Name] == nil {
+		pr.Status.Deployments[deploymentSpec.Name] = &reviewapps.DeploymentStatus{
+			LastActive: metav1.Now(),
+			IsActive:   deploymentSpec.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
+		}
+	}
+
+	pr.Status.Deployments[deploymentSpec.Name].Hostnames = hostnames
+
+	var runningDeployment appsv1.Deployment
+	if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+
+		if err := ctrl.SetControllerReference(pr, desiredDeployment, r.Scheme); err != nil {
+			return err
+		}
+
+		updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+
+		// Pull request was created and is active, scale it up
+		if pr.Status.Deployments[deploymentSpec.Name].IsActive {
+			if deploymentSpec.Replicas == 0 {
+				*desiredDeployment.Spec.Replicas = 1
+			} else {
+				*desiredDeployment.Spec.Replicas = deploymentSpec.Replicas
+			}
+		}
+
+		if err := r.Create(ctx, desiredDeployment); err != nil {
+			return err
+		}
+
+		log.Info("Deployment created", "deploymentName", deploymentName)
+	} else {
+		patch := client.MergeFrom(runningDeployment.DeepCopy())
+
+		// Update the target container image with the latest PR image if any is set on the PullRequest
+		updatedImage := false
+		if pr.Spec.ImageName != "" {
+			updatedImage = updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+
+			if updatedImage {
+				log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
+			}
+		}
+
+		replicas := *runningDeployment.Spec.Replicas
+		isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
+		if replicas == 0 {
+			// Only scale up if deployment is active and the user has not manually scaled the deployment
+			if isActive {
+				if deploymentSpec.Replicas != 0 {
+					replicas = deploymentSpec.Replicas
+				} else {
+					replicas = 1
+				}
+			}
+		} else if !isActive {
+			// Scale down if deployment is not active
+			replicas = 0
+		}
+
+		// If the deployment spec in the ReviewAppConfig gets updated we do not update the deployment
+		// The deployment needs to be manually deleted.
+		if updatedImage ||
+			*runningDeployment.Spec.Replicas != replicas ||
+			!equality.Semantic.DeepDerivative(desiredDeployment.Labels, runningDeployment.Labels) {
+
+			runningDeployment.Spec.Replicas = &replicas
+			runningDeployment.Labels = desiredLabels
+
+			if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
+				return err
+			}
+
+			log.Info("Deployment updated", "deploymentName", deploymentName)
+		}
+	}
+
+	return r.reconcileService(ctx, reviewApp, pr, deploymentSpec, objectMeta, selectorLabels)
+}
+
+// reconcileService ensures the Service for a single deployment spec exists and
+// matches the desired state.
+func (r *PullRequestReconciler) reconcileService(
+	ctx context.Context,
+	reviewApp *reviewapps.ReviewAppConfig,
+	pr *reviewapps.PullRequest,
+	deploymentSpec reviewapps.Deployments,
+	objectMeta metav1.ObjectMeta,
+	selectorLabels map[string]string,
+) error {
+	log := log.FromContext(ctx)
+
+	deploymentName := utils.GetDeploymentName(reviewApp, pr, deploymentSpec.Name)
+
+	desiredSvc := &corev1.Service{
+		ObjectMeta: *objectMeta.DeepCopy(),
+		Spec: corev1.ServiceSpec{
+			Selector: selectorLabels,
+			Type:     corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{
+				{
+					Name: "http",
+
+					// Always use port 80, the forwarder assumes this as well
+					Port:       80,
+					TargetPort: intstr.FromInt(int(deploymentSpec.TargetContainerPort)),
+				},
+			},
+		},
+	}
+
+	// If a .spec.deployment.name changes, the old service will not be cleaned up
+	var activeSvc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &activeSvc); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+
+		if err := ctrl.SetControllerReference(pr, desiredSvc, r.Scheme); err != nil {
+			return err
+		}
+
+		if err := r.Create(ctx, desiredSvc); err != nil {
+			return err
+		}
+
+		log.Info("Service created", "serviceName", deploymentName)
+		return nil
+	}
+
+	// Service labels or spec differs from desired spec
+	if !equality.Semantic.DeepDerivative(desiredSvc.Spec, activeSvc.Spec) ||
+		!equality.Semantic.DeepDerivative(desiredSvc.Labels, activeSvc.Labels) {
+		patch := client.MergeFrom(activeSvc.DeepCopy())
+
+		activeSvc.Labels = desiredSvc.Labels
+		activeSvc.Spec = desiredSvc.Spec
+
+		if err := r.Patch(ctx, &activeSvc, patch); err != nil {
+			return err
+		}
+
+		log.Info("Service updated", "serviceName", deploymentName)
+	}
+
+	return nil
 }
 
 func updateContainerImage(deploy *appsv1.Deployment, containerName, image string) bool {
@@ -401,7 +437,7 @@ func SetupHostIndex(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &reviewapps.PullRequest{}, utils.HostIndexFieldName, func(rawObj client.Object) []string {
 		pr := rawObj.(*reviewapps.PullRequest)
 
-		var hosts []string
+		hosts := make([]string, 0, len(pr.Status.Deployments))
 
 		for _, d := range pr.Status.Deployments {
 			hosts = append(hosts, d.Hostnames...)

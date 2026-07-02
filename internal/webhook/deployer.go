@@ -10,16 +10,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-
-	. "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 func writeFlush(w http.ResponseWriter, s string) {
-	w.Write([]byte(s))
+	_, _ = w.Write([]byte(s))
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -30,10 +29,10 @@ func writeFlush(w http.ResponseWriter, s string) {
 func createOrUpdatePullRequest(
 	ctx context.Context,
 	c client.Client,
-	reviewApp *ReviewAppConfig,
+	reviewApp *reviewapps.ReviewAppConfig,
 	webhook WebhookBody,
 	w http.ResponseWriter,
-) (*PullRequest, error) {
+) (*reviewapps.PullRequest, error) {
 	desiredPr := utils.PullRequestFor(*reviewApp, utils.PullRequestCreationOptions{
 		Image:             webhook.Image,
 		BranchName:        webhook.BranchName,
@@ -52,7 +51,7 @@ func createOrUpdatePullRequest(
 		for _, container := range deployment.Template.Spec.Containers {
 			// The image repo and name defined in the ReviewAppConfig must match the deployed image
 			if container.Name == deployment.TargetContainerName && !utils.IsSameImageRepo(container.Image, webhook.Image) {
-				err := fmt.Errorf("The image repository is immutable: \"%s\" cannot be changed to \"%s\"", container.Image, webhook.Image)
+				err := fmt.Errorf("the image repository is immutable: \"%s\" cannot be changed to \"%s\"", container.Image, webhook.Image)
 				log.Error(err, "The image repository is immutable")
 				w.WriteHeader(http.StatusForbidden)
 				return nil, err
@@ -60,7 +59,7 @@ func createOrUpdatePullRequest(
 		}
 	}
 
-	var existingPr PullRequest
+	var existingPr reviewapps.PullRequest
 
 	if err := c.Get(ctx, key, &existingPr); err != nil {
 		// Create the PullRequest if it is not found
@@ -90,7 +89,7 @@ func createOrUpdatePullRequest(
 		// forwarder's host index depends on.
 		specPatch := client.MergeFrom(existingPr.DeepCopy())
 
-		existingPr.ObjectMeta.Labels = desiredPr.ObjectMeta.Labels
+		existingPr.Labels = desiredPr.Labels
 		existingPr.Spec = desiredPr.Spec
 
 		// Update the PullRequest if it is found
@@ -104,13 +103,13 @@ func createOrUpdatePullRequest(
 		statusPatch := client.MergeFrom(existingPr.DeepCopy())
 
 		if existingPr.Status.Deployments == nil {
-			existingPr.Status.Deployments = make(map[string]*DeploymentStatus)
+			existingPr.Status.Deployments = make(map[string]*reviewapps.DeploymentStatus)
 		}
 
 		for _, deployment := range reviewApp.Spec.Deployments {
 			status := existingPr.Status.Deployments[deployment.Name]
 			if status == nil {
-				status = &DeploymentStatus{}
+				status = &reviewapps.DeploymentStatus{}
 				existingPr.Status.Deployments[deployment.Name] = status
 			}
 
@@ -184,7 +183,7 @@ func createOrUpdatePullRequest(
 			log.Info("Timeout waiting for deployments to be ready")
 			http.Error(w, "Timeout waiting for deployments to be ready", http.StatusRequestTimeout)
 
-			return nil, errors.New("Timeout waiting for deployments to be ready")
+			return nil, errors.New("timeout waiting for deployments to be ready")
 		}
 
 		time.Sleep(1 * time.Second)
