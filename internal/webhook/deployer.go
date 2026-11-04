@@ -128,16 +128,13 @@ func createOrUpdatePullRequest(
 		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", desiredPr.Spec.BranchName))
 	}
 
-	// Wait for the changes to the PullRequest to reconcile the Deployment before we start checking the status
-	time.Sleep(1 * time.Second)
-
 	attempts := 0
 	for {
 		finished := true
 
 		select {
 		case <-ctx.Done():
-			return &desiredPr, nil
+			return &desiredPr, ctx.Err()
 		default:
 		}
 
@@ -150,11 +147,20 @@ func createOrUpdatePullRequest(
 				Namespace: key.Namespace,
 			}, &deployment); err != nil {
 				if apierrors.IsNotFound(err) {
+					finished = false
 					writeFlush(w, fmt.Sprintf("Waiting for deployment \"%s\" to be created...\n", deploymentName))
-					break
+					continue
 				}
 
 				return nil, err
+			}
+
+			// Until the controller has applied the new image the deployment status
+			// describes the previous rollout
+			if !hasContainerImage(&deployment, deploymentSpec.TargetContainerName, desiredPr.Spec.ImageName) {
+				finished = false
+				writeFlush(w, fmt.Sprintf("Waiting for deployment \"%s\" to be updated...\n", deploymentName))
+				continue
 			}
 
 			status, done, err := utils.GetDeploymentStatus(&deployment)
@@ -190,4 +196,17 @@ func createOrUpdatePullRequest(
 	}
 
 	return &desiredPr, nil
+}
+
+// hasContainerImage reports whether the target container of the deployment runs image.
+// A deployment without the target container never gets its image updated by the
+// controller, so it is considered up to date.
+func hasContainerImage(deployment *appsv1.Deployment, containerName, image string) bool {
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == containerName {
+			return container.Image == image
+		}
+	}
+
+	return true
 }
