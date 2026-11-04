@@ -171,6 +171,75 @@ var _ = Describe("PullRequest Controller", func() {
 		})
 	})
 
+	Context("When reconciling a PullRequest that is not started on deploy", func() {
+		const namespace = "default"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var pr *reviewapps.PullRequest
+
+		BeforeEach(func() {
+			reviewApp = &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "inactive", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						Replicas:            2,
+						HostTemplates:       []string{"{{.BranchName}}.inactive.example.com"},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+							},
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+			pr = &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "inactive-feature", Namespace: namespace},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "inactive", BranchName: "feature", ImageName: "nginx:test"},
+			}
+		})
+
+		AfterEach(func() {
+			// envtest runs no garbage collector to delete what the PullRequest owns
+			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		It("creates the deployment scaled down", func() {
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			// A deployment created with replicas and scaled down right after would have a new generation
+			deployNN := types.NamespacedName{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, deployNN, &appsv1.Deployment{})
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+			Consistently(func(g Gomega) {
+				deploy := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(*deploy.Spec.Replicas).To(BeZero())
+				g.Expect(deploy.Generation).To(BeEquivalentTo(1))
+			}, 2*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+
+		It("creates the deployment with the template image when the PullRequest has no image", func() {
+			pr.Spec.ImageName = ""
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			deployNN := types.NamespacedName{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			Eventually(func(g Gomega) {
+				deploy := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:latest"))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+	})
+
 	Context("When two PullRequests have the same truncated deployment name", func() {
 		const namespace = "default"
 

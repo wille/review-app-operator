@@ -223,16 +223,16 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			return err
 		}
 
-		updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
-
-		// Pull request was created and is active, scale it up
-		if pr.Status.Deployments[deploymentSpec.Name].IsActive {
-			if deploymentSpec.Replicas == 0 {
-				*desiredDeployment.Spec.Replicas = 1
-			} else {
-				*desiredDeployment.Spec.Replicas = deploymentSpec.Replicas
-			}
+		if pr.Spec.ImageName != "" {
+			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 		}
+
+		// Only start the deployment if the pull request is active
+		replicas := int32(0)
+		if pr.Status.Deployments[deploymentSpec.Name].IsActive {
+			replicas = max(deploymentSpec.Replicas, 1)
+		}
+		desiredDeployment.Spec.Replicas = &replicas
 
 		if err := r.Create(ctx, desiredDeployment); err != nil {
 			return err
