@@ -179,8 +179,9 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// For example when the review app namespace is not watched by the operator
 		log.Error(err, "Error getting review app")
-		http.Error(w, "Error getting review app", http.StatusInternalServerError)
+		http.Error(w, "Error getting review app: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
