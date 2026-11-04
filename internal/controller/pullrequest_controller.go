@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"maps"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -239,6 +240,11 @@ func (r *PullRequestReconciler) reconcileDeployment(
 
 		log.Info("Deployment created", "deploymentName", deploymentName)
 	} else {
+		// Different branch names can be truncated to the same deployment name
+		if !metav1.IsControlledBy(&runningDeployment, pr) {
+			return fmt.Errorf("deployment %s is not controlled by PullRequest %s", deploymentName, pr.Name)
+		}
+
 		patch := client.MergeFrom(runningDeployment.DeepCopy())
 
 		// Update the target container image with the latest PR image if any is set on the PullRequest
@@ -335,6 +341,11 @@ func (r *PullRequestReconciler) reconcileService(
 
 		log.Info("Service created", "serviceName", deploymentName)
 		return nil
+	}
+
+	// Different branch names can be truncated to the same service name
+	if !metav1.IsControlledBy(&activeSvc, pr) {
+		return fmt.Errorf("service %s is not controlled by PullRequest %s", deploymentName, pr.Name)
 	}
 
 	// Service labels or spec differs from desired spec

@@ -196,9 +196,9 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		log.Info("Delete webhook received", "name", name)
 
-		if err := deletePullRequestByName(wh.Client, name); err != nil {
-			if apierrors.IsNotFound(err) {
-				log.Info("Pull request not found", "name", name)
+		if err := deletePullRequestByName(wh.Client, name, webhook.BranchName); err != nil {
+			if apierrors.IsNotFound(err) || errors.Is(err, errNameConflict) {
+				log.Info("Pull request not found", "name", name, "reason", err.Error())
 				http.Error(w, "Pull request not found", http.StatusNotFound)
 				return
 			}

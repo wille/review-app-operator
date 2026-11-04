@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -84,11 +85,23 @@ var _ = Describe("Deploy webhook", func() {
 		return &pr
 	}
 
+	// controlledBy returns a controller reference to the PullRequest, like the controller sets on deployments
+	controlledBy := func(pullRequestName string) []metav1.OwnerReference {
+		isController := true
+		return []metav1.OwnerReference{{
+			APIVersion: reviewapps.GroupVersion.String(),
+			Kind:       "PullRequest",
+			Name:       pullRequestName,
+			UID:        types.UID(pullRequestName),
+			Controller: &isController,
+		}}
+	}
+
 	// rolledOutDeployment returns the review app deployment for the "feature"
 	// branch, fully rolled out with image in the target container
 	rolledOutDeployment := func(image string) *appsv1.Deployment {
 		return &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "app-web-feature", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "app-web-feature", Namespace: "default", OwnerReferences: controlledBy("app-feature")},
 			Spec: appsv1.DeploymentSpec{
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
@@ -171,7 +184,11 @@ var _ = Describe("Deploy webhook", func() {
 		mac := hmac.New(sha256.New, []byte("secret"))
 		mac.Write(data)
 
-		req := httptest.NewRequest(method, "/v1", bytes.NewReader(data))
+		// Don't wait for the full rollout timeout when a deployment never rolls out
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		req := httptest.NewRequestWithContext(ctx, method, "/v1", bytes.NewReader(data))
 		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 		rec := httptest.NewRecorder()
 
@@ -222,5 +239,60 @@ var _ = Describe("Deploy webhook", func() {
 		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
 		Expect(lines[len(lines)-1]).To(HavePrefix("Error deploying: "))
 		Expect(rec.Body.String()).NotTo(ContainSubstring("Review App URL"))
+	})
+
+	It("does not deploy when the deployment name is used by another review app", func() {
+		// Long branch names are truncated to the same deployment name
+		// before they are truncated to the same PullRequest name
+		deployment := rolledOutDeployment("nginx:1")
+		deployment.OwnerReferences = controlledBy("app-feature-other")
+		Expect(c.Create(context.Background(), deployment)).To(Succeed())
+
+		rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+		Expect(rec.Code).To(Equal(http.StatusConflict))
+		Expect(rec.Body.String()).To(ContainSubstring(`"app-web-feature"`))
+		err := c.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "app-feature"}, &reviewapps.PullRequest{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the PullRequest should not be created")
+	})
+
+	Context("when another branch has the same normalized name", func() {
+		// feature/login and feature-login both normalize to app-feature-login
+		BeforeEach(func() {
+			Expect(c.Create(context.Background(), &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "app-feature-login", Namespace: "default"},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature/login", ImageName: "nginx:1"},
+			})).To(Succeed())
+		})
+
+		branchBody := func(method, branchName string) map[string]any {
+			body := webhookBody(method, time.Now())
+			body["branchName"] = branchName
+			return body
+		}
+
+		expectUnchanged := func() {
+			var pr reviewapps.PullRequest
+			Expect(c.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "app-feature-login"}, &pr)).To(Succeed())
+			Expect(pr.Spec.BranchName).To(Equal("feature/login"))
+			Expect(pr.Spec.ImageName).To(Equal("nginx:1"))
+		}
+
+		It("does not deploy over the review app of the other branch", func() {
+			rec := serve(http.MethodPost, branchBody(http.MethodPost, "feature-login"))
+
+			Expect(rec.Code).To(Equal(http.StatusConflict))
+			Expect(rec.Body.String()).To(ContainSubstring(`"feature/login"`))
+			expectUnchanged()
+		})
+
+		It("does not delete the review app of the other branch", func() {
+			Expect(serve(http.MethodDelete, branchBody(http.MethodDelete, "feature-login")).Code).To(Equal(http.StatusNotFound))
+			expectUnchanged()
+		})
+
+		It("deletes the review app of its own branch", func() {
+			Expect(serve(http.MethodDelete, branchBody(http.MethodDelete, "feature/login")).Code).To(Equal(http.StatusOK))
+		})
 	})
 })

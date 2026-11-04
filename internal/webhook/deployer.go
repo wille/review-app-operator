@@ -59,6 +59,14 @@ func createOrUpdatePullRequest(
 		}
 	}
 
+	if err := checkNameConflict(ctx, c, reviewApp, &desiredPr); err != nil {
+		if errors.Is(err, errNameConflict) {
+			log.Error(err, "Review app name conflict")
+			w.WriteHeader(http.StatusConflict)
+		}
+		return nil, err
+	}
+
 	var existingPr reviewapps.PullRequest
 
 	if err := c.Get(ctx, key, &existingPr); err != nil {
@@ -202,6 +210,38 @@ func createOrUpdatePullRequest(
 	}
 
 	return &desiredPr, nil
+}
+
+// checkNameConflict returns errNameConflict if the PullRequest or deployment names are used by another
+// branch, as branch names are normalized and truncated to different lengths in the resource names
+func checkNameConflict(ctx context.Context, c client.Client, reviewApp *reviewapps.ReviewAppConfig, pr *reviewapps.PullRequest) error {
+	var existingPr reviewapps.PullRequest
+	err := c.Get(ctx, client.ObjectKeyFromObject(pr), &existingPr)
+	if client.IgnoreNotFound(err) != nil {
+		return err
+	}
+	if err == nil && existingPr.Spec.BranchName != pr.Spec.BranchName {
+		return fmt.Errorf("%w: branch \"%s\" uses the name \"%s\"", errNameConflict, existingPr.Spec.BranchName, pr.Name)
+	}
+
+	for _, deploymentSpec := range reviewApp.Spec.Deployments {
+		deploymentName := utils.GetDeploymentName(reviewApp, pr, deploymentSpec.Name)
+
+		var deployment appsv1.Deployment
+		err := c.Get(ctx, types.NamespacedName{Namespace: pr.Namespace, Name: deploymentName}, &deployment)
+		if client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		if err != nil {
+			continue
+		}
+
+		if owner := metav1.GetControllerOf(&deployment); owner == nil || owner.Kind != "PullRequest" || owner.Name != pr.Name {
+			return fmt.Errorf("%w: the deployment \"%s\" belongs to another review app", errNameConflict, deploymentName)
+		}
+	}
+
+	return nil
 }
 
 // setDeployInfo sets the information about the latest deploy on status

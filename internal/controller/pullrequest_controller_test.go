@@ -26,9 +26,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/utils"
 )
 
 var _ = Describe("PullRequest Controller", func() {
@@ -113,6 +115,11 @@ var _ = Describe("PullRequest Controller", func() {
 				}, 10*time.Second, 250*time.Millisecond).Should(BeTrue())
 			}
 
+			// envtest runs no garbage collector to delete what the PullRequest owns
+			objectMeta := metav1.ObjectMeta{Name: expectedDeploymentName, Namespace: namespace}
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: objectMeta}))).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.Service{ObjectMeta: objectMeta}))).To(Succeed())
+
 			reviewApp := &reviewapps.ReviewAppConfig{}
 			if err := k8sClient.Get(ctx, reviewAppNN, reviewApp); err == nil {
 				Expect(k8sClient.Delete(ctx, reviewApp)).To(Succeed())
@@ -161,6 +168,80 @@ var _ = Describe("PullRequest Controller", func() {
 				}
 				g.Expect(found).To(BeTrue(), "container 'app' not found in deployment")
 			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+	})
+
+	Context("When two PullRequests have the same truncated deployment name", func() {
+		const namespace = "default"
+
+		// Both branches are truncated to the same deployment name
+		const branchA = "dependabot/npm_and_yarn/typescript-eslint/eslint-plugin-8.1.0"
+		const branchB = "dependabot/npm_and_yarn/typescript-eslint/eslint-plugin-8.2.0"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var prA, prB *reviewapps.PullRequest
+
+		newPullRequest := func(name, branchName, image string) *reviewapps.PullRequest {
+			return &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "trunc", BranchName: branchName, ImageName: image},
+			}
+		}
+
+		BeforeEach(func() {
+			reviewApp = &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "trunc", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates:       []string{"{{.BranchName}}.trunc.example.com"},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+							},
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+			prA = newPullRequest("trunc-a", branchA, "nginx:a")
+			prB = newPullRequest("trunc-b", branchB, "nginx:b")
+		})
+
+		AfterEach(func() {
+			// envtest runs no garbage collector to delete what the PullRequests own
+			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, prA, "web"), Namespace: namespace}
+			for _, obj := range []client.Object{prA, prB, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		It("does not take over the deployment of the other PullRequest", func() {
+			deploymentName := utils.GetDeploymentName(reviewApp, prA, "web")
+			Expect(utils.GetDeploymentName(reviewApp, prB, "web")).To(Equal(deploymentName))
+			deployNN := types.NamespacedName{Name: deploymentName, Namespace: namespace}
+
+			Expect(k8sClient.Create(ctx, prA)).To(Succeed())
+			deploy := &appsv1.Deployment{}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:a"))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+			uid, generation := deploy.UID, deploy.Generation
+
+			// A change by the other PullRequest is reverted right away, either by a new rollout
+			// or by recreating the deployment, so check that the deployment is left untouched
+			Expect(k8sClient.Create(ctx, prB)).To(Succeed())
+			Consistently(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.UID).To(Equal(uid))
+				g.Expect(deploy.Generation).To(Equal(generation))
+				g.Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:a"))
+				g.Expect(metav1.GetControllerOf(deploy).Name).To(Equal("trunc-a"))
+			}, 3*time.Second, 250*time.Millisecond).Should(Succeed())
 		})
 	})
 })
