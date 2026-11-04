@@ -13,10 +13,14 @@ webhook:
   replicas: 1
 
   # The webhook secret that will be used by the CI to trigger pull request events
-  # The secret will be created if it does not exist.
   secretKeyRef:
     name: webhook-secret
     key: webhook-secret
+
+  # Create the webhook secret with a random value if it does not exist.
+  # Disable it to create the secret yourself when the chart is rendered with `helm template`,
+  # like by Argo CD, where the existing secret can't be looked up and would get a new value on every render
+  createSecret: true
   ingress:
     ingressClassName: ""
     annotations: {}
