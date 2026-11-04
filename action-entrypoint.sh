@@ -43,23 +43,28 @@ case $action in
 esac
 
 # The method and timestamp are signed with the payload so that it can't be
-# replayed with another method or later on
-webhook_data=$(cat <<EOF | jq
-{
-    "method": "$method",
-    "timestamp": $(date +%s),
-    "reviewAppName": "$INPUT_REVIEW_APP_NAME",
-    "reviewAppNamespace": "$INPUT_REVIEW_APP_NAMESPACE",
-    "repositoryUrl": "$(read_event_field .repository.html_url)",
-    "branchName": "$(read_event_field .pull_request.head.ref)",
-    "pullRequestUrl": "$(read_event_field .pull_request.html_url)",
-    "pullRequestNumber": $(read_event_field .number),
-    "image": "$INPUT_IMAGE",
-    "merged": $(read_event_field .pull_request.merged),
-    "sender": "$(read_event_field .sender.html_url)"
-}
-EOF
-)
+# replayed with another method or later on.
+# Values are passed as jq arguments, as branch names may contain quotes
+webhook_data=$(jq \
+    --arg method "$method" \
+    --argjson timestamp "$(date +%s)" \
+    --arg reviewAppName "$INPUT_REVIEW_APP_NAME" \
+    --arg reviewAppNamespace "$INPUT_REVIEW_APP_NAMESPACE" \
+    --arg image "$INPUT_IMAGE" \
+    '{
+        method: $method,
+        timestamp: $timestamp,
+        reviewAppName: $reviewAppName,
+        reviewAppNamespace: $reviewAppNamespace,
+        repositoryUrl: .repository.html_url,
+        branchName: .pull_request.head.ref,
+        pullRequestUrl: .pull_request.html_url,
+        pullRequestNumber: .number,
+        image: $image,
+        merged: .pull_request.merged,
+        sender: .sender.html_url
+    }' "$GITHUB_EVENT_PATH"
+) || { echo "Failed to create the webhook payload"; exit 1; }
 
 WEBHOOK_SIGNATURE_256=$(echo -n "$webhook_data" | \
     openssl dgst -sha256 -hmac "$INPUT_WEBHOOK_SECRET" -binary | \
