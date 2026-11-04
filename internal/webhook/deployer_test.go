@@ -18,9 +18,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
@@ -63,8 +65,23 @@ var _ = Describe("Deploy webhook", func() {
 			WithScheme(scheme).
 			WithObjects(reviewApp).
 			WithStatusSubresource(&reviewapps.PullRequest{}).
+			// Like the API server, ignore the status when creating a PullRequest
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if pr, ok := obj.(*reviewapps.PullRequest); ok {
+						pr.Status = reviewapps.PullRequestStatus{}
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).
 			Build()
 	})
+
+	getPullRequest := func() *reviewapps.PullRequest {
+		var pr reviewapps.PullRequest
+		Expect(c.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "app-feature"}, &pr)).To(Succeed())
+		return &pr
+	}
 
 	// rolledOutDeployment returns the review app deployment for the "feature"
 	// branch, fully rolled out with image in the target container
@@ -86,8 +103,10 @@ var _ = Describe("Deploy webhook", func() {
 		defer cancel()
 
 		_, err := createOrUpdatePullRequest(ctx, c, reviewApp, WebhookBody{
-			BranchName: "feature",
-			Image:      image,
+			BranchName:        "feature",
+			Image:             image,
+			PullRequestNumber: 42,
+			Sender:            "https://github.com/octocat",
 		}, httptest.NewRecorder())
 
 		return err
@@ -107,6 +126,40 @@ var _ = Describe("Deploy webhook", func() {
 		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
 
 		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
+	})
+
+	It("persists the deploy information when creating the PullRequest", func() {
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
+
+		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
+
+		pr := getPullRequest()
+		Expect(pr.Status.PullRequestNumber).To(Equal(42))
+		Expect(pr.Status.DeployedBy).To(Equal("https://github.com/octocat"))
+	})
+
+	It("updates the deploy information without clobbering the controller status", func() {
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
+
+		existing := &reviewapps.PullRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
+			Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature", ImageName: "nginx:1"},
+		}
+		Expect(c.Create(context.Background(), existing)).To(Succeed())
+		existing.Status = reviewapps.PullRequestStatus{
+			PullRequestNumber: 1,
+			Deployments: map[string]*reviewapps.DeploymentStatus{
+				"web": {Hostnames: []string{"feature.example.com"}},
+			},
+		}
+		Expect(c.Status().Update(context.Background(), existing)).To(Succeed())
+
+		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
+
+		pr := getPullRequest()
+		Expect(pr.Status.PullRequestNumber).To(Equal(42))
+		Expect(pr.Status.DeployedBy).To(Equal("https://github.com/octocat"))
+		Expect(pr.Status.Deployments["web"].Hostnames).To(ConsistOf("feature.example.com"))
 	})
 
 	It("ends the streamed response with the error when the rollout fails", func() {

@@ -17,14 +17,7 @@ type PullRequestCreationOptions struct {
 func PullRequestFor(reviewApp reviewapps.ReviewAppConfig, opts PullRequestCreationOptions) reviewapps.PullRequest {
 	name := GetResourceName(reviewApp.Name, opts.BranchName)
 
-	deployments := make(map[string]*reviewapps.DeploymentStatus)
-	for _, spec := range reviewApp.Spec.Deployments {
-		deployments[spec.Name] = &reviewapps.DeploymentStatus{
-			LastActive: metav1.Now(),
-			IsActive:   spec.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
-		}
-	}
-
+	// The deployment statuses are initialized by the controller
 	return reviewapps.PullRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -42,7 +35,6 @@ func PullRequestFor(reviewApp reviewapps.ReviewAppConfig, opts PullRequestCreati
 			RepositoryURL:     opts.RepositoryURL,
 			PullRequestURL:    opts.PullRequestURL,
 			PullRequestNumber: opts.PullRequestNumber,
-			Deployments:       deployments,
 		},
 	}
 

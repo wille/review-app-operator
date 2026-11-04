@@ -64,16 +64,22 @@ func createOrUpdatePullRequest(
 	if err := c.Get(ctx, key, &existingPr); err != nil {
 		// Create the PullRequest if it is not found
 		if apierrors.IsNotFound(err) {
-			// for _, deployment := range reviewApp.Spec.Deployments {
-			// 	desiredPr.Status.Deployments[deployment.Name] = &DeploymentStatus{
-			// 		LastActive: metav1.Now(),
-			// 		IsActive:   deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
-			// 	}
-			// }
+			pr := desiredPr.DeepCopy()
+			pr.Status = reviewapps.PullRequestStatus{}
 
-			// log.Info("Create debug", "desiredPr", desiredPr.Status.Deployments)
+			if err := c.Create(ctx, pr); err != nil {
+				return nil, err
+			}
 
-			if err := c.Create(ctx, &desiredPr); err != nil {
+			// The status is ignored on create, so the deploy information is patched separately.
+			// The deployment statuses are initialized by the controller, but the field is
+			// required and an empty map leaves any statuses the controller already set intact
+			statusPatch := client.MergeFrom(pr.DeepCopy())
+			setDeployInfo(&pr.Status, desiredPr.Status)
+			pr.Status.Deployments = map[string]*reviewapps.DeploymentStatus{}
+
+			if err := c.Status().Patch(ctx, pr, statusPatch); err != nil {
+				log.Error(err, "Failed to update status")
 				return nil, err
 			}
 
@@ -98,9 +104,10 @@ func createOrUpdatePullRequest(
 			return nil, err
 		}
 
-		// Bump activity on the existing status, preserving the hostnames and any
-		// other status set by the controller.
+		// Set the deploy information and bump activity on the existing status, preserving
+		// the hostnames and any other status set by the controller.
 		statusPatch := client.MergeFrom(existingPr.DeepCopy())
+		setDeployInfo(&existingPr.Status, desiredPr.Status)
 
 		if existingPr.Status.Deployments == nil {
 			existingPr.Status.Deployments = make(map[string]*reviewapps.DeploymentStatus)
@@ -195,6 +202,15 @@ func createOrUpdatePullRequest(
 	}
 
 	return &desiredPr, nil
+}
+
+// setDeployInfo sets the information about the latest deploy on status
+func setDeployInfo(status *reviewapps.PullRequestStatus, deploy reviewapps.PullRequestStatus) {
+	status.DeployedAt = deploy.DeployedAt
+	status.DeployedBy = deploy.DeployedBy
+	status.RepositoryURL = deploy.RepositoryURL
+	status.PullRequestURL = deploy.PullRequestURL
+	status.PullRequestNumber = deploy.PullRequestNumber
 }
 
 // hasContainerImage reports whether the target container of the deployment runs image.
