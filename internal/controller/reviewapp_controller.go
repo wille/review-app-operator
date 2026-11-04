@@ -35,9 +35,9 @@ type ReviewAppConfigReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewconfigs/finalizers,verbs=update
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewappconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewappconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewappconfigs/finalizers,verbs=update
 
 func (r *ReviewAppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)

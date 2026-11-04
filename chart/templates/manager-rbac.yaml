@@ -47,7 +47,6 @@ rules:
   - pullrequests
   verbs:
   - create
-  - delete
   - get
   - list
   - patch

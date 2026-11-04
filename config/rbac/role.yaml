@@ -55,14 +55,14 @@ rules:
   - reviewapps.william.nu
   resources:
   - pullrequests/finalizers
-  - reviewconfigs/finalizers
+  - reviewappconfigs/finalizers
   verbs:
   - update
 - apiGroups:
   - reviewapps.william.nu
   resources:
   - pullrequests/status
-  - reviewconfigs/status
+  - reviewappconfigs/status
   verbs:
   - get
   - patch
@@ -70,7 +70,7 @@ rules:
 - apiGroups:
   - reviewapps.william.nu
   resources:
-  - reviewconfigs
+  - reviewappconfigs
   verbs:
   - create
   - delete
