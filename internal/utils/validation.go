@@ -10,10 +10,20 @@ import (
 // gchr.io/test/repo:v1 and gchr.io/test/repo:v2 is the same repository
 // gchr.io/test/repo:v1 and gchr.io/test/example:v1 is not
 func IsSameImageRepo(i1, i2 string) bool {
-	b1, _, _ := strings.Cut(i1, ":")
-	b2, _, _ := strings.Cut(i2, ":")
+	return imageRepository(i1) == imageRepository(i2)
+}
 
-	return b1 == b2
+// imageRepository returns the image without its tag and digest,
+// registry.example.com:5000/repo:v1@sha256:... is registry.example.com:5000/repo
+func imageRepository(image string) string {
+	repo, _, _ := strings.Cut(image, "@")
+
+	// A colon before the last slash separates the registry port, not the tag
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		repo = repo[:i]
+	}
+
+	return repo
 }
 
 // ImageHasDigest checks if the image has a digest
