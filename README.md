@@ -12,7 +12,7 @@ The Review App Operator consists of four components:
 
 - **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
 - **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand
-- **Downscaler**: Watches pull request deployments and downscales if no traffic is received after `scaleDownAfter` (default 1h)
+- **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set
 - **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with [`wille/review-app-action`](https://github.com/wille/review-app-action)
 
 ## Installation

@@ -53,9 +53,12 @@ func (ds Downscaler) run(ctx context.Context) {
 
 	for _, reviewApp := range list.Items {
 		var prs reviewapps.PullRequestList
-		if err := ds.List(ctx, &prs, client.MatchingFields{utils.ReviewAppRefField: reviewApp.Name}); err != nil {
+		if err := ds.List(ctx, &prs,
+			client.InNamespace(reviewApp.Namespace),
+			client.MatchingFields{utils.ReviewAppRefField: reviewApp.Name},
+		); err != nil {
 			log.Error(err, "Failed to list pull requests for review app", "reviewApp", reviewApp.Name)
-			break
+			continue
 		}
 
 		for _, pr := range prs.Items {
