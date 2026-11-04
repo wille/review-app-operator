@@ -96,7 +96,7 @@ rules:
 
 {{ $fullname := include "chart.fullname" . }}
 {{ $labels := include "chart.labels" . }}
-{{- range $namespace := .Values.namespaces -}}
+{{- range $namespace := .Values.namespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
