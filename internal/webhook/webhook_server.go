@@ -192,8 +192,10 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w,
 		)
 		if err != nil {
+			// The status code can't be changed once the deployment progress has started
+			// streaming, so clients must check that the response ends with the review app URL
 			log.Error(err, "Error deploying", "name", name)
-			http.Error(w, "Error deploying", http.StatusInternalServerError)
+			http.Error(w, "Error deploying: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 

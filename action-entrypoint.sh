@@ -70,9 +70,16 @@ case $action in
         echo
 
         if [ $curl_status -eq 0 ]; then
-            # The last line of the response is the review app URL
-            review_app_url=$(tail -n1 "$TMP/output" | sed 's/Review App URL: //')
-            set_output "review_app_url=$review_app_url"
+            # The last line of a successful response is the review app URL.
+            # Errors after the response has started streaming can't change the
+            # status code, so anything else means the deployment failed
+            last_line=$(tail -n1 "$TMP/output")
+            if [[ "$last_line" == "Review App URL: "* ]]; then
+                set_output "review_app_url=${last_line#Review App URL: }"
+            else
+                echo "Deployment failed"
+                curl_status=1
+            fi
         fi
         ;;
     "closed")

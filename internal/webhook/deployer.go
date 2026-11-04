@@ -187,7 +187,6 @@ func createOrUpdatePullRequest(
 		// The default value for ProgressDeadlineSeconds is 600
 		if attempts > 600 {
 			log.Info("Timeout waiting for deployments to be ready")
-			http.Error(w, "Timeout waiting for deployments to be ready", http.StatusRequestTimeout)
 
 			return nil, errors.New("timeout waiting for deployments to be ready")
 		}

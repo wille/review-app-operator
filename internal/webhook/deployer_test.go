@@ -1,8 +1,14 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +31,7 @@ func TestWebhook(t *testing.T) {
 	RunSpecs(t, "Webhook")
 }
 
-var _ = Describe("createOrUpdatePullRequest", func() {
+var _ = Describe("Deploy webhook", func() {
 	var (
 		reviewApp *reviewapps.ReviewAppConfig
 		c         client.Client
@@ -101,5 +107,31 @@ var _ = Describe("createOrUpdatePullRequest", func() {
 		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
 
 		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
+	})
+
+	It("ends the streamed response with the error when the rollout fails", func() {
+		deployment := rolledOutDeployment("nginx:2")
+		deployment.Status.Conditions = []appsv1.DeploymentCondition{{
+			Type:   appsv1.DeploymentProgressing,
+			Status: corev1.ConditionFalse,
+			Reason: "ProgressDeadlineExceeded",
+		}}
+		Expect(c.Create(context.Background(), deployment)).To(Succeed())
+
+		body := []byte(`{"reviewAppName":"app","reviewAppNamespace":"default","branchName":"feature","image":"nginx:2"}`)
+		mac := hmac.New(sha256.New, []byte("secret"))
+		mac.Write(body)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1", bytes.NewReader(body))
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		rec := httptest.NewRecorder()
+
+		WebhookServer{Client: c, WebhookSecret: "secret"}.ServeHTTP(rec, req)
+
+		// The status code was sent before the rollout failed
+		Expect(rec.Code).To(Equal(http.StatusCreated))
+		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+		Expect(lines[len(lines)-1]).To(HavePrefix("Error deploying: "))
+		Expect(rec.Body.String()).NotTo(ContainSubstring("Review App URL"))
 	})
 })
