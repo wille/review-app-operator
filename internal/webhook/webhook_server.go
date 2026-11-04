@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -50,6 +51,14 @@ type WebhookBody struct {
 
 	// Sender is the URL to the Github user who initiated the action
 	Sender string `json:"sender"`
+
+	// Method is the HTTP method the webhook is signed for, so that it can't be
+	// replayed with another method
+	Method string `json:"method"`
+
+	// Timestamp is the unix time the webhook was signed at, so that it can't be
+	// replayed later on
+	Timestamp int64 `json:"timestamp"`
 }
 
 type WebhookServer struct {
@@ -87,6 +96,27 @@ const maxWebhookBodyBytes = 1 << 20 // 1 MiB
 
 // readHeaderTimeout limits how long clients may take to send the request headers
 const readHeaderTimeout = 10 * time.Second
+
+// maxWebhookAge is how long after it was signed a webhook is accepted, allowing for clock skew
+const maxWebhookAge = 5 * time.Minute
+
+// validateReplay ensures that a signed webhook is only accepted for the method
+// it was signed for, and only shortly after it was signed
+func validateReplay(webhook WebhookBody, method string, now time.Time) error {
+	if webhook.Method == "" || webhook.Timestamp == 0 {
+		return errors.New("the webhook is not signed with a method and timestamp, update the review app action")
+	}
+
+	if webhook.Method != method {
+		return fmt.Errorf("the webhook is signed for %s", webhook.Method)
+	}
+
+	if age := now.Sub(time.Unix(webhook.Timestamp, 0)); age > maxWebhookAge || age < -maxWebhookAge {
+		return fmt.Errorf("the webhook was not signed within %s of the server time", maxWebhookAge)
+	}
+
+	return nil
+}
 
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
@@ -128,6 +158,12 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &webhook); err != nil {
 		log.Error(err, "Error unmarshalling body")
 		http.Error(w, "Error unmarshalling body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateReplay(webhook, r.Method, time.Now()); err != nil {
+		log.Error(err, "Rejected webhook", "method", r.Method)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 

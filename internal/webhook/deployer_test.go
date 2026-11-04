@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -162,6 +163,49 @@ var _ = Describe("Deploy webhook", func() {
 		Expect(pr.Status.Deployments["web"].Hostnames).To(ConsistOf("feature.example.com"))
 	})
 
+	// serve sends a webhook request with body, signed with the webhook secret
+	serve := func(method string, body map[string]any) *httptest.ResponseRecorder {
+		data, err := json.Marshal(body)
+		Expect(err).NotTo(HaveOccurred())
+
+		mac := hmac.New(sha256.New, []byte("secret"))
+		mac.Write(data)
+
+		req := httptest.NewRequest(method, "/v1", bytes.NewReader(data))
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		rec := httptest.NewRecorder()
+
+		WebhookServer{Client: c, WebhookSecret: "secret"}.ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	webhookBody := func(signedMethod string, signedAt time.Time) map[string]any {
+		return map[string]any{
+			"reviewAppName":      "app",
+			"reviewAppNamespace": "default",
+			"branchName":         "feature",
+			"image":              "nginx:2",
+			"method":             signedMethod,
+			"timestamp":          signedAt.Unix(),
+		}
+	}
+
+	DescribeTable("rejects signed requests that are replayed",
+		func(body map[string]any) {
+			Expect(serve(http.MethodDelete, body).Code).To(Equal(http.StatusUnauthorized))
+		},
+		Entry("with another method", webhookBody(http.MethodPost, time.Now())),
+		Entry("long after they were signed", webhookBody(http.MethodDelete, time.Now().Add(-10*time.Minute))),
+		Entry("with a timestamp in the future", webhookBody(http.MethodDelete, time.Now().Add(10*time.Minute))),
+		Entry("without a method and timestamp", map[string]any{"reviewAppName": "app", "reviewAppNamespace": "default", "branchName": "feature"}),
+	)
+
+	It("accepts a signed request for its method shortly after it was signed", func() {
+		// There is no PullRequest to delete
+		Expect(serve(http.MethodDelete, webhookBody(http.MethodDelete, time.Now().Add(-time.Minute))).Code).To(Equal(http.StatusNotFound))
+	})
+
 	It("ends the streamed response with the error when the rollout fails", func() {
 		deployment := rolledOutDeployment("nginx:2")
 		deployment.Status.Conditions = []appsv1.DeploymentCondition{{
@@ -171,15 +215,7 @@ var _ = Describe("Deploy webhook", func() {
 		}}
 		Expect(c.Create(context.Background(), deployment)).To(Succeed())
 
-		body := []byte(`{"reviewAppName":"app","reviewAppNamespace":"default","branchName":"feature","image":"nginx:2"}`)
-		mac := hmac.New(sha256.New, []byte("secret"))
-		mac.Write(body)
-
-		req := httptest.NewRequest(http.MethodPost, "/v1", bytes.NewReader(body))
-		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-		rec := httptest.NewRecorder()
-
-		WebhookServer{Client: c, WebhookSecret: "secret"}.ServeHTTP(rec, req)
+		rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
 
 		// The status code was sent before the rollout failed
 		Expect(rec.Code).To(Equal(http.StatusCreated))

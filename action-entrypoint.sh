@@ -27,8 +27,27 @@ set_output() {
     fi
 }
 
+action=$(read_event_field '.action')
+case $action in
+    "opened" | "reopened" | "synchronize")
+        method=POST
+        [[ -z "$INPUT_IMAGE" ]] && echo "Missing INPUT_IMAGE" && exit 1
+        ;;
+    "closed")
+        method=DELETE
+        ;;
+    *)
+        echo "Invalid action: $action"
+        exit 1
+        ;;
+esac
+
+# The method and timestamp are signed with the payload so that it can't be
+# replayed with another method or later on
 webhook_data=$(cat <<EOF | jq
 {
+    "method": "$method",
+    "timestamp": $(date +%s),
     "reviewAppName": "$INPUT_REVIEW_APP_NAME",
     "reviewAppNamespace": "$INPUT_REVIEW_APP_NAMESPACE",
     "repositoryUrl": "$(read_event_field .repository.html_url)",
@@ -53,10 +72,8 @@ if [ "$INPUT_DEBUG" = true ]; then
     echo "Webhook signature: $WEBHOOK_SIGNATURE_256"
 fi
 
-action=$(read_event_field '.action')
-case $action in
-    "opened" | "reopened" | "synchronize")
-        [[ -z "$INPUT_IMAGE" ]] && echo "Missing INPUT_IMAGE" && exit 1
+case $method in
+    POST)
         curl --silent --show-error --no-buffer --fail-with-body \
             -H "Content-Type: application/json" \
             -H "User-Agent: review-app-action/$VERSION" \
@@ -82,7 +99,7 @@ case $action in
             fi
         fi
         ;;
-    "closed")
+    DELETE)
         curl --silent --show-error --no-buffer --fail-with-body \
             -H "Content-Type: application/json" \
             -H "User-Agent: review-app-action/$VERSION" \
@@ -91,10 +108,6 @@ case $action in
             --data "$webhook_data" "$INPUT_WEBHOOK_URL/v1"
         curl_status=$?
 
-        ;;
-    *)
-        echo "Invalid action: $INPUT_ACTION"
-        exit 1
         ;;
 esac
 
