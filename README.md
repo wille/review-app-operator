@@ -6,14 +6,14 @@ A Kubernetes operator for creating staging/preview environments for pull request
 
 It's intended to be the most simple solution to have fully functional dynamic staging review environments for pull requests and to not waste computing resources by automatically stopping environments that are not used and starting them again on demand.
 
-Use the [Review App Action](https://github.com/wille/review-app-action) to keep deployments in sync with Pull Requests.
+Use the [Review App Action](#review-app-action) to keep deployments in sync with Pull Requests.
 
 The Review App Operator consists of four components:
 
 - **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
 - **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand
 - **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set
-- **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with [`wille/review-app-action`](https://github.com/wille/review-app-action)
+- **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with the [Review App Action](#review-app-action)
 
 ## Installation
 
@@ -30,7 +30,7 @@ See [values.yaml](/chart/values.yaml) for all available options
 ```yaml
 webhook:
   # The webhook secret that will be used by the CI to trigger pull request events
-  # The secret will be created if it does not exist.
+  # The secret is created with a random value if it does not exist, unless `createSecret: false`
   secretKeyRef:
     name: webhook-secret
     key: webhook-secret
@@ -49,8 +49,8 @@ forwarder:
 
 > [!IMPORTANT]
 >
-> - The `forwarder.ingress.host` field must be a a wildcard hostname as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewAppConfig`
-> - The `webhook.ingress.host` is the host used for the [Review App Action](https://github.com/wille/review-app-action) webhook
+> - The `forwarder.ingress.hosts` must be wildcard hostnames as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewAppConfig`
+> - The `webhook.ingress.host` is the host used for the [Review App Action](#review-app-action) webhook
 
 ## Install with Helm
 
@@ -100,14 +100,58 @@ Create this ReviewAppConfig
 `kubectl apply -f my-review-app.yml`
 
 > [!NOTE]
-> See the [ReviewAppConfig sample](/config/samples/reviewapps.william.nu_v1alpha1_reviewapp.yaml) for a more detailed example.
+> See the [ReviewAppConfig sample](/config/samples/rac.william.nu_v1alpha1_reviewappconfig.yaml) for a more detailed example.
 >
 > Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
+
+## Review App Action
+
+The Review App Action deploys the pull request image when a pull request is opened or updated, and deletes the review app when it is closed. Build and push the image before the action runs.
+
+```yaml
+name: Review App
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  # Stop waiting for a deployment that was replaced by a newer push
+  group: review-app-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-app:
+    runs-on: ubuntu-latest
+    steps:
+      # Build and push user/app:${{ github.event.pull_request.head.sha }} unless the pull request is closed
+
+      - name: Deploy
+        id: deploy
+        uses: wille/review-app-operator@master
+        with:
+          review_app_name: my-review-app
+          review_app_namespace: staging
+          webhook_url: https://review-app-webhooks.example.com
+          webhook_secret: ${{ secrets.REVIEW_APP_WEBHOOK_SECRET }}
+          image: user/app:${{ github.event.pull_request.head.sha }}
+
+      # The URL of the review app is available as ${{ steps.deploy.outputs.review_app_url }}
+```
+
+The webhook secret is created by the Helm chart, unless `webhook.createSecret` is disabled to create it yourself:
+
+```bash
+$ kubectl get secret webhook-secret --namespace review-app-operator-system -o jsonpath='{.data.webhook-secret}' | base64 -d
+```
+
+> [!NOTE]
+> The action and the operator should be updated together, older actions are rejected by newer operators
 
 ## PullRequest resource
 
 > [!IMPORTANT]
-> Pull requests are created and deleted automatically by the [Review App Action](https://github.com/wille/review-app-action) that runs your Github Actions `pull_request` workflows
+> Pull requests are created and deleted automatically by the [Review App Action](#review-app-action) that runs your Github Actions `pull_request` workflows
 >
 > You can manually create PullRequest resources to test the operator
 
@@ -120,8 +164,8 @@ metadata:
 spec:
   # The branch name to create a review app for
   branchName: my-branch
-  # The name of the review app to create
-  reviewAppName: my-review-app
+  # The ReviewAppConfig to create a review app with
+  reviewAppRef: my-review-app
 
   # The latest deployed image
   imageName: <user>/<repo>:29df5a41b93906346d693c90adcd8acf266893c3@sha256:...
