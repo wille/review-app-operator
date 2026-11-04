@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chart.fullname" . }}-forwarder
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+---
+# The forwarder looks up PullRequests by host, marks them as active and reports the deployment status
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chart.fullname" . }}-forwarder-role
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - pullrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - pullrequests/status
+  verbs:
+  - patch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - reviewappconfigs
+  verbs:
+  - get
+  - list
+  - watch
+
+{{ $fullname := include "chart.fullname" . }}
+{{ $labels := include "chart.labels" . }}
+{{- range $namespace := .Values.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-forwarder-rolebinding
+  namespace: {{ $namespace }}
+  labels:
+  {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-forwarder-role
+subjects:
+- kind: ServiceAccount
+  name: {{ $fullname }}-forwarder
+  namespace: {{ $.Release.Namespace }}
+{{- end }}

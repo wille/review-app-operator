@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chart.fullname" . }}-webhook
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+---
+# The webhook creates, updates and deletes PullRequests and follows the rollout of their deployments
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chart.fullname" . }}-webhook-role
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - pullrequests
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - pullrequests/status
+  verbs:
+  - patch
+- apiGroups:
+  - reviewapps.william.nu
+  resources:
+  - reviewappconfigs
+  verbs:
+  - get
+  - list
+  - watch
+
+{{ $fullname := include "chart.fullname" . }}
+{{ $labels := include "chart.labels" . }}
+{{- range $namespace := .Values.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-webhook-rolebinding
+  namespace: {{ $namespace }}
+  labels:
+  {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-webhook-role
+subjects:
+- kind: ServiceAccount
+  name: {{ $fullname }}-webhook
+  namespace: {{ $.Release.Namespace }}
+{{- end }}

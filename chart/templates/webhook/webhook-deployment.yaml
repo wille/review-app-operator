@@ -55,5 +55,5 @@ spec:
               - ALL
       securityContext:
         runAsNonRoot: true
-      serviceAccountName: {{ include "chart.fullname" . }}-controller-manager
+      serviceAccountName: {{ include "chart.fullname" . }}-webhook
       terminationGracePeriodSeconds: 30
