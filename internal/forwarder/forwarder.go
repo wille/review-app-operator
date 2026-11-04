@@ -1,8 +1,8 @@
 package forwarder
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,6 +72,9 @@ func getClusterDomain() string {
 }
 
 var requestID int64
+
+// readHeaderTimeout limits how long clients may take to send the request headers
+const readHeaderTimeout = 10 * time.Second
 
 // httpClient is shared across all proxied requests so that connections to the
 // upstream review app services can be reused.
@@ -186,19 +189,11 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set("X-Branch", pr.Labels["app.kubernetes.io/name"])
 	r.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
 
-	// Buffer the request body so that it can be re-sent on each connection
-	// attempt while we wait for the review app to scale up. Without this, a
-	// retried request (the common cold-start path) would forward an empty body.
-	var bodyBytes []byte
-	if r.Body != nil {
-		b, err := io.ReadAll(r.Body)
-		_ = r.Body.Close()
-		if err != nil {
-			log.Error(err, "Error reading request body")
-			http.Error(w, "Error reading request body", http.StatusBadRequest)
-			return
-		}
-		bodyBytes = b
+	// The transport closes the request body even when it fails to connect, but nothing has
+	// been read from it then, so the body is reused for every connection attempt while
+	// the review app is scaling up
+	if r.Body != http.NoBody {
+		r.Body = io.NopCloser(r.Body)
 	}
 
 	attempt := 0
@@ -244,17 +239,16 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 
-		// Build a fresh outbound request for every attempt with its own body
-		// reader so retries re-send the buffered body.
-		outReq := r.Clone(r.Context())
-		outReq.RequestURI = ""
-		if bodyBytes != nil {
-			outReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			outReq.ContentLength = int64(len(bodyBytes))
-		}
-
-		resp, err := httpClient.Do(outReq)
+		resp, err := httpClient.Do(r.Clone(r.Context()))
 		if err != nil {
+			// Only retry while the review app can't be connected to. Once the request
+			// has been sent it may have been processed, and the body has been read
+			if !isDialError(err) {
+				log.Error(err, "Error forwarding request")
+				http.Error(w, "Bad gateway", http.StatusBadGateway)
+				return
+			}
+
 			if attempt%5 == 0 {
 				var deployment appsv1.Deployment
 				if _err := c.Get(r.Context(), types.NamespacedName{
@@ -262,7 +256,6 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Name:      deploymentName,
 				}, &deployment); _err != nil {
 					log.Error(_err, "Waiting for deployment")
-					http.Error(w, "Waiting for deployment", http.StatusInternalServerError)
 				} else {
 					status, _, _ := utils.GetDeploymentStatus(&deployment)
 					log.Info(fmt.Sprintf("Connection attempt: %s: %s", strings.Trim(status, "\n"), err.Error()))
@@ -294,12 +287,18 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// isDialError reports whether err is a failure to connect to the review app
+func isDialError(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
 func (fw Forwarder) Start(ctx context.Context) error {
 	log := ctrl.Log.WithName("forwarder")
 
 	log.Info("Starting forwarding proxy", "addr", fw.Addr)
 
-	srv := http.Server{Addr: fw.Addr, Handler: fw}
+	srv := http.Server{Addr: fw.Addr, Handler: fw, ReadHeaderTimeout: readHeaderTimeout}
 
 	go func() {
 		<-ctx.Done()

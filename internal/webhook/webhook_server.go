@@ -63,7 +63,7 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 	handler := http.NewServeMux()
 	handler.Handle("/v1", wh)
 
-	srv := http.Server{Addr: wh.Addr, Handler: handler}
+	srv := http.Server{Addr: wh.Addr, Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
 
 	go func() {
 		<-ctx.Done()
@@ -84,6 +84,9 @@ func (wh WebhookServer) Start(ctx context.Context) error {
 // maxWebhookBodyBytes is the maximum size of a webhook request body we are
 // willing to buffer before authenticating the request.
 const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
+// readHeaderTimeout limits how long clients may take to send the request headers
+const readHeaderTimeout = 10 * time.Second
 
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
