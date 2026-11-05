@@ -227,8 +227,15 @@ var _ = Describe("Deploy webhook", func() {
 	)
 
 	It("accepts a signed request for its method shortly after it was signed", func() {
-		// There is no PullRequest to delete
-		Expect(serve(http.MethodDelete, webhookBody(http.MethodDelete, time.Now().Add(-time.Minute))).Code).To(Equal(http.StatusNotFound))
+		Expect(serve(http.MethodDelete, webhookBody(http.MethodDelete, time.Now().Add(-time.Minute))).Code).To(Equal(http.StatusOK))
+	})
+
+	It("succeeds to close a pull request that has no review app", func() {
+		// Like when its first deploy failed, or it was already deleted
+		rec := serve(http.MethodDelete, webhookBody(http.MethodDelete, time.Now()))
+
+		Expect(rec.Code).To(Equal(http.StatusOK))
+		Expect(rec.Body.String()).To(Equal("No review app to delete for branch \"feature\"\n"))
 	})
 
 	It("ends the streamed response with the error when the rollout fails", func() {
@@ -309,7 +316,8 @@ var _ = Describe("Deploy webhook", func() {
 		})
 
 		It("does not delete the review app of the other branch", func() {
-			Expect(serve(http.MethodDelete, branchBody(http.MethodDelete, "feature-login")).Code).To(Equal(http.StatusNotFound))
+			// The closed branch has no review app of its own
+			Expect(serve(http.MethodDelete, branchBody(http.MethodDelete, "feature-login")).Code).To(Equal(http.StatusOK))
 			expectUnchanged()
 		})
 

@@ -207,8 +207,10 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if err := deletePullRequestByName(wh.Client, name, webhook.BranchName); err != nil {
 			if apierrors.IsNotFound(err) || errors.Is(err, errNameConflict) {
-				log.Info("Pull request not found", "name", name, "reason", err.Error())
-				http.Error(w, "Pull request not found", http.StatusNotFound)
+				// Closing a pull request without a review app, like when its first deploy
+				// failed or it was already deleted, leaves nothing to do
+				log.Info("No review app to delete", "name", name, "reason", err.Error())
+				http.Error(w, fmt.Sprintf("No review app to delete for branch \"%s\"", webhook.BranchName), http.StatusOK)
 				return
 			}
 

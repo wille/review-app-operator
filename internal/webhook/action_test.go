@@ -143,6 +143,12 @@ var _ = Describe("Review App Action", func() {
 		Expect(apierrors.IsNotFound(c.Get(context.Background(), prKey, &reviewapps.PullRequest{}))).To(BeTrue())
 	})
 
+	It("succeeds to close a pull request that has no review app", func() {
+		_, err := runAction("closed", "secret")
+
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("fails when the webhook rejects the signature", func() {
 		outputs, err := runAction("synchronize", "another secret")
 
