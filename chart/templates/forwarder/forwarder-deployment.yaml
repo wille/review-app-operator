@@ -56,8 +56,11 @@ spec:
           capabilities:
             drop:
               - ALL
+          readOnlyRootFilesystem: true
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: {{ include "chart.fullname" . }}-forwarder
       terminationGracePeriodSeconds: {{ .Values.forwarder.terminationGracePeriodSeconds }}
       # Spread the replicas over nodes and zones, so that losing one doesn't take them all

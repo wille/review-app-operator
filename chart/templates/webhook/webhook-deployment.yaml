@@ -60,8 +60,11 @@ spec:
           capabilities:
             drop:
               - ALL
+          readOnlyRootFilesystem: true
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: {{ include "chart.fullname" . }}-webhook
       terminationGracePeriodSeconds: {{ .Values.webhook.terminationGracePeriodSeconds }}
       # Spread the replicas over nodes and zones, so that losing one doesn't take them all
