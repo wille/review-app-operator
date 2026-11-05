@@ -309,10 +309,19 @@ func (r *PullRequestReconciler) reconcileDeployment(
 		updatedImage := false
 		if pr.Spec.ImageName != "" {
 			updatedImage = updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+		}
 
-			if updatedImage {
-				log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
-			}
+		if updatedImage {
+			// Changes to the deployment spec in the ReviewAppConfig roll out with the next image
+			// pushed to each pull request, which restarts the pods anyway, instead of restarting
+			// every review app at once when the ReviewAppConfig changes
+			runningDeployment.Spec.Template = *desiredDeployment.Spec.Template.DeepCopy()
+			runningDeployment.Spec.Strategy = desiredDeployment.Spec.Strategy
+			runningDeployment.Spec.MinReadySeconds = desiredDeployment.Spec.MinReadySeconds
+			runningDeployment.Spec.ProgressDeadlineSeconds = desiredDeployment.Spec.ProgressDeadlineSeconds
+			updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+
+			log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
 		}
 
 		replicas := *runningDeployment.Spec.Replicas
@@ -331,8 +340,6 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			replicas = 0
 		}
 
-		// If the deployment spec in the ReviewAppConfig gets updated we do not update the deployment
-		// The deployment needs to be manually deleted.
 		if updatedImage ||
 			*runningDeployment.Spec.Replicas != replicas ||
 			!equality.Semantic.DeepDerivative(desiredDeployment.Labels, runningDeployment.Labels) {

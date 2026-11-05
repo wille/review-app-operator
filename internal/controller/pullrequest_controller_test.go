@@ -387,6 +387,102 @@ var _ = Describe("PullRequest Controller", func() {
 		})
 	})
 
+	Context("When the ReviewAppConfig of a review app changes", func() {
+		const namespace = "default"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var pr *reviewapps.PullRequest
+		var deployNN types.NamespacedName
+
+		BeforeEach(func() {
+			reviewApp = &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "changing", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates:       []string{"{{.BranchName}}.changing.example.com"},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+							},
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+			pr = &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "changing-feature", Namespace: namespace},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "changing", BranchName: "feature", ImageName: "nginx:test"},
+			}
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			deployNN = types.NamespacedName{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, deployNN, &appsv1.Deployment{})
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+
+		AfterEach(func() {
+			// envtest runs no garbage collector to delete what the PullRequest owns
+			objectMeta := metav1.ObjectMeta{Name: deployNN.Name, Namespace: namespace}
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		// updateReviewApp changes the ReviewAppConfig, retrying when the controller updated it first
+		updateReviewApp := func(change func(*reviewapps.ReviewAppConfig)) {
+			Eventually(func() error {
+				var latest reviewapps.ReviewAppConfig
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(reviewApp), &latest); err != nil {
+					return err
+				}
+				change(&latest)
+				return k8sClient.Update(ctx, &latest)
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		}
+
+		// pushImage deploys a new image to the review app like the webhook does on a push
+		pushImage := func(image string) {
+			Eventually(func() error {
+				var latest reviewapps.PullRequest
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &latest); err != nil {
+					return err
+				}
+				latest.Spec.ImageName = image
+				return k8sClient.Update(ctx, &latest)
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		}
+
+		It("rolls out the change with the next image that is pushed", func() {
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+			generation := deploy.Generation
+
+			updateReviewApp(func(reviewApp *reviewapps.ReviewAppConfig) {
+				reviewApp.Spec.Deployments[0].Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "FEATURE_FLAG", Value: "on"}}
+			})
+
+			// Changing the ReviewAppConfig doesn't restart every review app at once
+			Consistently(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.Generation).To(Equal(generation))
+			}, 2*time.Second, 250*time.Millisecond).Should(Succeed())
+
+			pushImage("nginx:test2")
+
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				container := deploy.Spec.Template.Spec.Containers[0]
+				g.Expect(container.Image).To(Equal("nginx:test2"))
+				g.Expect(container.Env).To(ConsistOf(corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"}))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+	})
+
 	Context("When two PullRequests have the same truncated deployment name", func() {
 		const namespace = "default"
 
