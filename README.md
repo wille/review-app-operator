@@ -108,7 +108,17 @@ Create this ReviewAppConfig
 > [!NOTE]
 > See the [ReviewAppConfig sample](/config/samples/rac.william.nu_v1alpha1_reviewappconfig.yaml) for a more detailed example.
 >
-> Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}`
+> Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}` and `{{.RandomID}}`, and must contain `{{.BranchName}}` or `{{.RandomID}}`
+
+### Random hostnames
+
+`{{.RandomID}}` makes review app hostnames hard to guess, like `frontend-{{.RandomID}}.review-apps.example.com` for `frontend-3f9c1a7b2d4e.review-apps.example.com`. The ID is 12 hex digits from the PullRequest's random UID:
+
+- It is the same for every push to a pull request, and for all hostnames of the pull request.
+- A pull request that is closed and reopened gets a new ID.
+- Adding it to the `hostTemplates` of a `ReviewAppConfig` changes the hostnames of the existing review apps.
+
+A long branch name is shortened to keep the random ID in the hostname. Random hostnames are hard to guess, but not secret: they appear in the pull request's deployment links and CI logs.
 
 ## Review App Action
 

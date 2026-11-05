@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -67,11 +68,12 @@ var _ = Describe("Deploy webhook", func() {
 			WithScheme(scheme).
 			WithObjects(reviewApp).
 			WithStatusSubresource(&reviewapps.PullRequest{}).
-			// Like the API server, ignore the status when creating a PullRequest
+			// Like the API server, ignore the status and generate a random UID when creating a PullRequest
 			WithInterceptorFuncs(interceptor.Funcs{
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 					if pr, ok := obj.(*reviewapps.PullRequest); ok {
 						pr.Status = reviewapps.PullRequestStatus{}
+						pr.UID = uuid.NewUUID()
 					}
 					return c.Create(ctx, obj, opts...)
 				},
@@ -239,6 +241,20 @@ var _ = Describe("Deploy webhook", func() {
 		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
 		Expect(lines[len(lines)-1]).To(HavePrefix("Error deploying: "))
 		Expect(rec.Body.String()).NotTo(ContainSubstring("Review App URL"))
+	})
+
+	It("reports the review app URL with the random ID of the PullRequest", func() {
+		reviewApp.Spec.Deployments[0].HostTemplates = []string{"{{.BranchName}}-{{.RandomID}}.example.com"}
+		Expect(c.Update(context.Background(), reviewApp)).To(Succeed())
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
+
+		rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+		pr := getPullRequest()
+		Expect(pr.UID).NotTo(BeEmpty())
+		id := strings.ReplaceAll(string(pr.UID), "-", "")[:12]
+		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+		Expect(lines[len(lines)-1]).To(Equal("Review App URL: https://feature-" + id + ".example.com"))
 	})
 
 	It("does not deploy when the deployment name is used by another review app", func() {

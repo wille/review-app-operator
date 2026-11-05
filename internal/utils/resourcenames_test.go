@@ -86,4 +86,46 @@ var _ = Describe("Hostname templates", func() {
 		long, _ := GetHostnameFromTemplate("{{.BranchName}}-"+strings.Repeat("a", validation.DNS1123LabelMaxLength)+".example.com", deploymentName, pr, reviewApp)
 		Expect(validation.IsDNS1123Subdomain(long)).To(BeEmpty())
 	})
+
+	It("should require the branch name or the random ID in a template", func() {
+		_, err := GetHostnameFromTemplate("{{.ReviewAppConfig}}.review.example.com", deploymentName, pr, reviewApp)
+		Expect(err).To(HaveOccurred())
+	})
+
+	Context("with a random ID", func() {
+		withUID := pr
+		withUID.UID = "3f9c1a7b-2d4e-4a5b-8c6d-7e8f9a0b1c2d"
+
+		It("takes the random ID from the start of the UID", func() {
+			Expect(RandomID(withUID)).To(Equal("3f9c1a7b2d4e"))
+		})
+
+		It("should generate a hostname with the random ID", func() {
+			Expect(GetHostnameFromTemplate("{{.RandomID}}.review.example.com", deploymentName, withUID, reviewApp)).To(Equal("3f9c1a7b2d4e.review.example.com"))
+			Expect(GetHostnameFromTemplate("{{.BranchName}}-{{.RandomID}}.review.example.com", deploymentName, withUID, reviewApp)).To(Equal("feature-v1-3f9c1a7b2d4e.review.example.com"))
+		})
+
+		It("shortens a long branch name instead of the random ID", func() {
+			longBranch := withUID
+			longBranch.Spec.BranchName = "dependabot/npm_and_yarn/" + strings.Repeat("a", 100)
+
+			host, err := GetHostnameFromTemplate("frontend-{{.BranchName}}-{{.RandomID}}.review.example.com", deploymentName, longBranch, reviewApp)
+			Expect(err).NotTo(HaveOccurred())
+			label, _, _ := strings.Cut(host, ".")
+			Expect(label).To(HaveLen(validation.DNS1123LabelMaxLength))
+			Expect(label).To(HavePrefix("frontend-dependabot-npm-and-yarn-a"))
+			Expect(label).To(HaveSuffix("-3f9c1a7b2d4e"))
+			Expect(validation.IsDNS1123Subdomain(host)).To(BeEmpty())
+		})
+
+		It("fails when the template is too long for the random ID", func() {
+			_, err := GetHostnameFromTemplate(strings.Repeat("a", validation.DNS1123LabelMaxLength)+"-{{.RandomID}}.review.example.com", deploymentName, withUID, reviewApp)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("fails when the PullRequest has no UID yet", func() {
+			_, err := GetHostnameFromTemplate("{{.RandomID}}.review.example.com", deploymentName, pr, reviewApp)
+			Expect(err).To(HaveOccurred())
+		})
+	})
 })

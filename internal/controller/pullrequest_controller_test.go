@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -236,6 +237,66 @@ var _ = Describe("PullRequest Controller", func() {
 				deploy := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
 				g.Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:latest"))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+	})
+
+	Context("When a host template has a random ID", func() {
+		const namespace = "default"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var pr *reviewapps.PullRequest
+
+		BeforeEach(func() {
+			reviewApp = &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "random", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates: []string{
+							"{{.RandomID}}.random.example.com",
+							"mobile-{{.BranchName}}-{{.RandomID}}.random.example.com",
+						},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+							},
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+			pr = &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "random-feature", Namespace: namespace},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "random", BranchName: "feature/login", ImageName: "nginx:test"},
+			}
+		})
+
+		AfterEach(func() {
+			// envtest runs no garbage collector to delete what the PullRequest owns
+			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		It("records the hostnames with the random ID from the PullRequest UID", func() {
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			// The first 12 hex digits of the UID the API server generated
+			id := strings.ReplaceAll(string(pr.UID), "-", "")[:12]
+
+			Eventually(func(g Gomega) {
+				var got reviewapps.PullRequest
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &got)).To(Succeed())
+				g.Expect(got.Status.Deployments).To(HaveKey("web"))
+				g.Expect(got.Status.Deployments["web"].Hostnames).To(ConsistOf(
+					id+".random.example.com",
+					"mobile-feature-login-"+id+".random.example.com",
+				))
 			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 		})
 	})

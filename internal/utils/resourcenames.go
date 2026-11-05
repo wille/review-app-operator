@@ -47,21 +47,65 @@ func normalize(s string) string {
 	return s
 }
 
+// randomIDLength is the number of hex digits in {{.RandomID}}, which is 48 random bits
+const randomIDLength = 12
+
+// RandomID returns the random ID of a pull request for hostnames. It is the start of the UID,
+// which the API server generates randomly, so it is stable for the life of the PullRequest
+func RandomID(pr reviewapps.PullRequest) (string, error) {
+	id := strings.ReplaceAll(string(pr.UID), "-", "")
+	if len(id) < randomIDLength {
+		return "", fmt.Errorf("pull request %s has no UID for {{.RandomID}}", pr.Name)
+	}
+
+	return id[:randomIDLength], nil
+}
+
 // GetHostnameFromTemplate generates a hostname from a template string.
 // Permitted variables are
 // - {{.ReviewAppConfig}}
 // - {{.BranchName}}
 // - {{.DeploymentName}}
+// - {{.PullRequestNumber}}
+// - {{.RandomID}}
+// A template must contain {{.BranchName}} or {{.RandomID}}
 func GetHostnameFromTemplate(template string, deploymentName string, pr reviewapps.PullRequest, reviewApp reviewapps.ReviewAppConfig) (string, error) {
-	if !strings.Contains(template, "{{.BranchName}}") {
-		return "", fmt.Errorf("template %s does not contain {{.BranchName}}", template)
+	hasRandomID := strings.Contains(template, "{{.RandomID}}")
+	if !hasRandomID && !strings.Contains(template, "{{.BranchName}}") {
+		return "", fmt.Errorf("template %s does not contain {{.BranchName}} or {{.RandomID}}", template)
+	}
+
+	randomID := ""
+	if hasRandomID {
+		var err error
+		if randomID, err = RandomID(pr); err != nil {
+			return "", err
+		}
 	}
 
 	// Uses go template syntax
-	s := strings.ReplaceAll(template, "{{.BranchName}}", normalize(pr.Spec.BranchName))
-	s = strings.ReplaceAll(s, "{{.ReviewAppConfig}}", normalize(reviewApp.Name))
-	s = strings.ReplaceAll(s, "{{.DeploymentName}}", normalize(deploymentName))
-	s = strings.ReplaceAll(s, "{{.PullRequestNumber}}", strconv.Itoa(pr.Status.PullRequestNumber))
+	render := func(template, branchName string) string {
+		s := strings.ReplaceAll(template, "{{.BranchName}}", branchName)
+		s = strings.ReplaceAll(s, "{{.ReviewAppConfig}}", normalize(reviewApp.Name))
+		s = strings.ReplaceAll(s, "{{.DeploymentName}}", normalize(deploymentName))
+		s = strings.ReplaceAll(s, "{{.PullRequestNumber}}", strconv.Itoa(pr.Status.PullRequestNumber))
+		s = strings.ReplaceAll(s, "{{.RandomID}}", randomID)
+		return s
+	}
+
+	branchName := normalize(pr.Spec.BranchName)
+
+	// Shorten a long branch name to fit the label instead of cutting the end of the label,
+	// which could cut the random ID. The template variables contain dots, so measure the
+	// rendered label
+	if hasRandomID {
+		label, _, _ := strings.Cut(render(template, branchName), ".")
+		if excess := len(label) - validation.DNS1123LabelMaxLength; excess > 0 && strings.Contains(label, branchName) {
+			branchName = strings.TrimRight(branchName[:max(len(branchName)-excess, 0)], "-")
+		}
+	}
+
+	s := render(template, branchName)
 
 	// Split template-x.review.example.com into template-x, review.example.com
 	// and ensure that it isn't too long
@@ -72,8 +116,12 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr reviewap
 		return "", fmt.Errorf("no domain in %s", s)
 	}
 
-	// Try to cut the long dns label to a valid length
 	if len(label) > validation.DNS1123LabelMaxLength {
+		if hasRandomID {
+			return "", fmt.Errorf("template %s is too long for a DNS label", template)
+		}
+
+		// Try to cut the long dns label to a valid length
 		label = normalize(label[:validation.DNS1123LabelMaxLength])
 	}
 

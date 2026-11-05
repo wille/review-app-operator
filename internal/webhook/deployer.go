@@ -67,12 +67,14 @@ func createOrUpdatePullRequest(
 		return nil, err
 	}
 
+	// The PullRequest as stored, with the UID that {{.RandomID}} is generated from
+	var pr *reviewapps.PullRequest
 	var existingPr reviewapps.PullRequest
 
 	if err := c.Get(ctx, key, &existingPr); err != nil {
 		// Create the PullRequest if it is not found
 		if apierrors.IsNotFound(err) {
-			pr := desiredPr.DeepCopy()
+			pr = desiredPr.DeepCopy()
 			pr.Status = reviewapps.PullRequestStatus{}
 
 			if err := c.Create(ctx, pr); err != nil {
@@ -138,6 +140,7 @@ func createOrUpdatePullRequest(
 			log.Error(err, "Failed to update status")
 			return nil, err
 		}
+		pr = &existingPr
 
 		w.WriteHeader(http.StatusAccepted)
 		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", desiredPr.Spec.BranchName))
@@ -149,7 +152,7 @@ func createOrUpdatePullRequest(
 
 		select {
 		case <-ctx.Done():
-			return &desiredPr, ctx.Err()
+			return pr, ctx.Err()
 		default:
 		}
 
@@ -181,7 +184,7 @@ func createOrUpdatePullRequest(
 			status, done, err := utils.GetDeploymentStatus(&deployment)
 
 			if err != nil {
-				return &desiredPr, err
+				return pr, err
 			}
 
 			if !done {
@@ -209,7 +212,7 @@ func createOrUpdatePullRequest(
 		time.Sleep(1 * time.Second)
 	}
 
-	return &desiredPr, nil
+	return pr, nil
 }
 
 // checkNameConflict returns errNameConflict if the PullRequest or deployment names are used by another

@@ -38,7 +38,7 @@ type Deployments struct {
 	// +optional
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
-	// HostTemplates must contain at least {{.BranchName}}
+	// HostTemplates must contain {{.BranchName}} or {{.RandomID}}
 	// +kubebuilder:validation:MinItems=1
 	HostTemplates []string `json:"hostTemplates"`
 
