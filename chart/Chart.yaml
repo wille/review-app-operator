@@ -6,6 +6,6 @@ sources:
   - https://github.com/wille/review-app-operator
 type: application
 # The chart is published when this version lands on master and is not published yet
-version: 0.2.0
+version: 0.3.0
 # The controller release the chart deploys by default
-appVersion: v0.2.0
+appVersion: v0.3.0
