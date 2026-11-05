@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,6 +56,10 @@ const (
 type PullRequestReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// APIReader reads from the API server instead of the cache, before scaling down or deleting
+	// review apps, so that a visit the cache has not seen yet keeps them
+	APIReader client.Reader
 }
 
 // +kubebuilder:rbac:groups=reviewapps.william.nu,resources=pullrequests,verbs=get;list;watch;create;update;patch
@@ -139,11 +145,22 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Loop all desired deployments in the ReviewAppConfig spec
+	now := time.Now()
 	var reconcileErr error
+	var requeueAfter time.Duration
+	lastActivity := deployedAt(pr)
+	leaseNames := make([]string, 0, len(reviewApp.Spec.Deployments))
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		if reconcileErr = r.reconcileDeployment(ctx, &reviewApp, pr, deploymentSpec); reconcileErr != nil {
+		activity, err := r.reconcileDeployment(ctx, &reviewApp, pr, deploymentSpec, now)
+		if reconcileErr = err; reconcileErr != nil {
 			break
 		}
+
+		requeueAfter = earliest(requeueAfter, activity.scaleDownIn)
+		if activity.lastVisit.After(lastActivity) {
+			lastActivity = activity.lastVisit
+		}
+		leaseNames = append(leaseNames, utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name))
 	}
 
 	// Record the error on the PullRequest, where the webhook reports it to CI
@@ -155,7 +172,31 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	return ctrl.Result{}, reconcileErr
+	if reconcileErr != nil {
+		return ctrl.Result{}, reconcileErr
+	}
+
+	deleted, deleteIn, err := r.deleteInactive(ctx, &reviewApp, pr, leaseNames, lastActivity, now)
+	if err != nil || deleted {
+		return ctrl.Result{}, err
+	}
+
+	// Look again when a deployment is to scale down, or the review app to be deleted
+	return ctrl.Result{RequeueAfter: earliest(requeueAfter, deleteIn)}, nil
+}
+
+// earliest returns the shortest of two durations to wait, where 0 is not waiting for anything
+func earliest(a, b time.Duration) time.Duration {
+	if a == 0 || (b != 0 && b < a) {
+		return b
+	}
+	return a
+}
+
+// deploymentActivity is when a deployment was last visited, and when it is to scale down
+type deploymentActivity struct {
+	lastVisit   time.Time
+	scaleDownIn time.Duration
 }
 
 // Reasons of the Reconciled condition
@@ -216,7 +257,8 @@ func (r *PullRequestReconciler) reconcileDeployment(
 	reviewApp *reviewapps.ReviewAppConfig,
 	pr *reviewapps.PullRequest,
 	deploymentSpec reviewapps.Deployments,
-) error {
+	now time.Time,
+) (deploymentActivity, error) {
 	log := log.FromContext(ctx)
 
 	deploymentName := utils.GetDeploymentName(reviewApp, pr, deploymentSpec.Name)
@@ -259,48 +301,57 @@ func (r *PullRequestReconciler) reconcileDeployment(
 	// Get the hostnames for this deployment
 	hostnames, err := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, *reviewApp)
 	if err != nil {
-		return err
+		return deploymentActivity{}, err
 	}
 
+	lease, err := r.reconcileLease(ctx, reviewApp, pr, deploymentSpec, deploymentName, selectorLabels)
+	if err != nil {
+		return deploymentActivity{}, err
+	}
+
+	// The activity is in the Lease, which has the activity that earlier versions recorded here now
 	if pr.Status.Deployments[deploymentSpec.Name] == nil {
-		pr.Status.Deployments[deploymentSpec.Name] = &reviewapps.DeploymentStatus{
-			LastActive: metav1.Now(),
-			IsActive:   deploymentSpec.StartOnDeploy || reviewApp.Spec.StartOnDeploy,
-		}
+		pr.Status.Deployments[deploymentSpec.Name] = &reviewapps.DeploymentStatus{}
 	}
+	status := pr.Status.Deployments[deploymentSpec.Name]
+	status.Hostnames = hostnames
+	status.LastActive = metav1.Time{}
+	status.IsActive = false
 
-	pr.Status.Deployments[deploymentSpec.Name].Hostnames = hostnames
+	scaleDownAfter := scaleDownAfter(reviewApp, deploymentSpec)
+	startOnDeploy := startOnDeploy(reviewApp, deploymentSpec)
+	running, until := runsUntil(lastActive(lease, pr, startOnDeploy), scaleDownAfter, now)
 
 	var runningDeployment appsv1.Deployment
 	if err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: reviewApp.Namespace}, &runningDeployment); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return err
+			return deploymentActivity{}, err
 		}
 
 		if err := ctrl.SetControllerReference(pr, desiredDeployment, r.Scheme); err != nil {
-			return err
+			return deploymentActivity{}, err
 		}
 
 		if pr.Spec.ImageName != "" {
 			updateContainerImage(desiredDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 		}
 
-		// Only start the deployment if the pull request is active
+		// Only start the deployment if it is active
 		replicas := int32(0)
-		if pr.Status.Deployments[deploymentSpec.Name].IsActive {
+		if running {
 			replicas = max(deploymentSpec.Replicas, 1)
 		}
 		desiredDeployment.Spec.Replicas = &replicas
 
 		if err := r.Create(ctx, desiredDeployment); err != nil {
-			return err
+			return deploymentActivity{}, err
 		}
 
 		log.Info("Deployment created", "deploymentName", deploymentName)
 	} else {
 		// Different branch names can be truncated to the same deployment name
 		if !metav1.IsControlledBy(&runningDeployment, pr) {
-			return fmt.Errorf("deployment %s %w %s", deploymentName, errNotControlled, pr.Name)
+			return deploymentActivity{}, fmt.Errorf("deployment %s %w %s", deploymentName, errNotControlled, pr.Name)
 		}
 
 		patch := client.MergeFrom(runningDeployment.DeepCopy())
@@ -324,19 +375,24 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
 		}
 
-		replicas := *runningDeployment.Spec.Replicas
-		isActive := pr.Status.Deployments[deploymentSpec.Name].IsActive
-		if replicas == 0 {
-			// Only scale up if deployment is active and the user has not manually scaled the deployment
-			if isActive {
-				if deploymentSpec.Replicas != 0 {
-					replicas = deploymentSpec.Replicas
-				} else {
-					replicas = 1
-				}
+		if *runningDeployment.Spec.Replicas > 0 && !running {
+			// Read the Lease again from the API server before scaling down, in case the cache has
+			// not seen the last visit yet
+			if err := r.apiReader().Get(ctx, client.ObjectKeyFromObject(lease), lease); err != nil {
+				return deploymentActivity{}, err
 			}
-		} else if !isActive {
-			// Scale down if deployment is not active
+			running, until = runsUntil(lastActive(lease, pr, startOnDeploy), scaleDownAfter, now)
+		}
+
+		replicas := *runningDeployment.Spec.Replicas
+		if replicas == 0 {
+			// Start the deployment when it is active. A deployment that runs keeps the
+			// replicas it was scaled to by hand
+			if running {
+				replicas = max(deploymentSpec.Replicas, 1)
+			}
+		} else if !running {
+			log.Info("Scaling down", "deploymentName", deploymentName, "lastVisit", lastVisit(lease), "scaleDownAfter", scaleDownAfter)
 			replicas = 0
 		}
 
@@ -348,14 +404,20 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			runningDeployment.Labels = desiredLabels
 
 			if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
-				return err
+				return deploymentActivity{}, err
 			}
 
 			log.Info("Deployment updated", "deploymentName", deploymentName)
 		}
 	}
 
-	return r.reconcileService(ctx, reviewApp, pr, deploymentSpec, objectMeta, selectorLabels)
+	activity := deploymentActivity{lastVisit: lastVisit(lease)}
+	if running && !until.IsZero() {
+		// Look again when the deployment is to scale down
+		activity.scaleDownIn = until.Sub(now) + time.Second
+	}
+
+	return activity, r.reconcileService(ctx, reviewApp, pr, deploymentSpec, objectMeta, selectorLabels)
 }
 
 // reconcileService ensures the Service for a single deployment spec exists and
@@ -499,6 +561,8 @@ func (r *PullRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&reviewapps.PullRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		// Visits only reconcile when they start a deployment
+		Owns(&coordinationv1.Lease{}, builder.WithPredicates(wakeUpPredicate)).
 		// Watch for changes to ReviewAppConfig resources
 		Watches(
 			&reviewapps.ReviewAppConfig{},

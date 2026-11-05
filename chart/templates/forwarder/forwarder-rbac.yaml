@@ -5,7 +5,8 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 ---
-# The forwarder looks up PullRequests by host, marks them as active and reports the deployment status
+# The forwarder looks up PullRequests by host, records visits in the Leases of their deployments and
+# reports the deployment status
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -30,9 +31,9 @@ rules:
   - list
   - watch
 - apiGroups:
-  - reviewapps.william.nu
+  - coordination.k8s.io
   resources:
-  - pullrequests/status
+  - leases
   verbs:
   - patch
 - apiGroups:

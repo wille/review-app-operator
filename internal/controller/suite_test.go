@@ -83,8 +83,9 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	err = (&PullRequestReconciler{
-		Client: k8sManager.GetClient(),
-		Scheme: k8sManager.GetScheme(),
+		Client:    k8sManager.GetClient(),
+		Scheme:    k8sManager.GetScheme(),
+		APIReader: k8sManager.GetAPIReader(),
 	}).SetupWithManager(k8sManager)
 	Expect(err).NotTo(HaveOccurred())
 

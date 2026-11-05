@@ -3,23 +3,27 @@ package forwarder
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
@@ -35,9 +39,13 @@ var _ = Describe("Forwarder", func() {
 	var (
 		fwd Forwarder
 
+		// pullRequest returns the PullRequest of the review app, and newClient a client that has it
+		pullRequest func() *reviewapps.PullRequest
+		newClient   func(funcs interceptor.Funcs, objs ...client.Object) client.Client
+
 		// The number of connection attempts to the review app that are refused
 		// before connecting, like while it is scaling up
-		refusedDials int32
+		refusedDials atomic.Int32
 		dials        atomic.Int32
 	)
 
@@ -57,7 +65,7 @@ var _ = Describe("Forwarder", func() {
 		transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				addr := server.Listener.Addr().String()
-				if dials.Add(1) <= refusedDials {
+				if dials.Add(1) <= refusedDials.Load() {
 					addr = closed.Addr().String()
 				}
 				return (&net.Dialer{}).DialContext(ctx, network, addr)
@@ -73,7 +81,8 @@ var _ = Describe("Forwarder", func() {
 	}
 
 	BeforeEach(func() {
-		refusedDials = 0
+		refusedDials.Store(0)
+		renewals = newRenewThrottle()
 		dials.Store(0)
 
 		scheme := runtime.NewScheme()
@@ -97,35 +106,40 @@ var _ = Describe("Forwarder", func() {
 			},
 		}
 
-		pr := &reviewapps.PullRequest{
-			ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
-			Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature"},
-			Status: reviewapps.PullRequestStatus{
-				Deployments: map[string]*reviewapps.DeploymentStatus{
-					"web": {IsActive: true, LastActive: metav1.Now(), Hostnames: []string{"feature.example.com"}},
+		pullRequest = func() *reviewapps.PullRequest {
+			return &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature"},
+				Status: reviewapps.PullRequestStatus{
+					Deployments: map[string]*reviewapps.DeploymentStatus{
+						"web": {IsActive: true, LastActive: metav1.Now(), Hostnames: []string{"feature.example.com"}},
+					},
 				},
-			},
+			}
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(reviewApp, pr).
-			WithStatusSubresource(&reviewapps.PullRequest{}).
-			WithIndex(&reviewapps.PullRequest{}, utils.HostIndexFieldName, func(obj client.Object) []string {
-				deployments := obj.(*reviewapps.PullRequest).Status.Deployments
-				hosts := make([]string, 0, len(deployments))
-				for _, d := range deployments {
-					hosts = append(hosts, d.Hostnames...)
-				}
-				return hosts
-			}).
-			Build()
+		newClient = func(funcs interceptor.Funcs, objs ...client.Object) client.Client {
+			return fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(append(objs, reviewApp.DeepCopy())...).
+				WithStatusSubresource(&reviewapps.PullRequest{}).
+				WithIndex(&reviewapps.PullRequest{}, utils.HostIndexFieldName, func(obj client.Object) []string {
+					deployments := obj.(*reviewapps.PullRequest).Status.Deployments
+					hosts := make([]string, 0, len(deployments))
+					for _, d := range deployments {
+						hosts = append(hosts, d.Hostnames...)
+					}
+					return hosts
+				}).
+				WithInterceptorFuncs(funcs).
+				Build()
+		}
 
-		fwd = Forwarder{Client: c, ConnectionTimeout: 5 * time.Second}
+		fwd = Forwarder{Client: newClient(interceptor.Funcs{}, pullRequest()), ConnectionTimeout: 5 * time.Second}
 	})
 
 	It("re-sends the request body after the connection is refused", func() {
-		refusedDials = 2
+		refusedDials.Store(2)
 		upstream(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.Copy(w, r.Body)
 		})
@@ -159,6 +173,127 @@ var _ = Describe("Forwarder", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(received, 3*time.Second).Should(Receive(Equal("hello")))
 	})
+
+	Context("when recording visits", func() {
+		var renewals atomic.Int32
+
+		BeforeEach(func() {
+			renewals.Store(0)
+			upstream(func(w http.ResponseWriter, r *http.Request) {})
+		})
+
+		// The Lease that the controller creates for the deployment of the review app
+		lease := func() *coordinationv1.Lease {
+			return &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "app-web-feature", Namespace: "default"}}
+		}
+
+		// countRenewals counts the Lease renewals before renew makes them
+		countRenewals := func(renew func(n int32) error) interceptor.Funcs {
+			return interceptor.Funcs{
+				Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					if _, ok := obj.(*coordinationv1.Lease); ok {
+						if err := renew(renewals.Add(1)); err != nil {
+							return err
+						}
+					}
+					return c.Patch(ctx, obj, patch, opts...)
+				},
+				SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					Fail("the forwarder writes the visits to the Lease, not the PullRequest")
+					return nil
+				},
+			}
+		}
+		succeed := func(int32) error { return nil }
+
+		renewed := func(c client.Client) *coordinationv1.Lease {
+			stored := lease()
+			Expect(c.Get(context.Background(), client.ObjectKeyFromObject(stored), stored)).To(Succeed())
+			return stored
+		}
+
+		// visit sends requests to the review app at the same time
+		visit := func(requests int) {
+			var wg sync.WaitGroup
+			for range requests {
+				wg.Go(func() {
+					fwd.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://feature.example.com/", nil))
+				})
+			}
+			wg.Wait()
+		}
+
+		It("renews the Lease of the visited deployment", func() {
+			c := newClient(countRenewals(succeed), pullRequest(), lease())
+			fwd.Client = c
+
+			visit(1)
+
+			Eventually(func(g Gomega) {
+				stored := renewed(c)
+				g.Expect(stored.Spec.RenewTime).NotTo(BeNil())
+				g.Expect(stored.Spec.RenewTime.Time).To(BeTemporally("~", time.Now(), 5*time.Second))
+				g.Expect(stored.Spec.HolderIdentity).To(HaveValue(Equal(holderIdentity)))
+			}).Should(Succeed())
+		})
+
+		It("renews the Lease once a renewal interval, also with many visits at once", func() {
+			fwd.Client = newClient(countRenewals(succeed), pullRequest(), lease())
+
+			visit(20)
+			Eventually(renewals.Load).Should(BeEquivalentTo(1))
+
+			visit(20)
+			Consistently(renewals.Load, 500*time.Millisecond).Should(BeEquivalentTo(1))
+		})
+
+		It("renews the Lease again when renewing it failed", func() {
+			c := newClient(countRenewals(func(n int32) error {
+				if n == 1 {
+					return errors.New("the API server is unavailable")
+				}
+				return nil
+			}), pullRequest(), lease())
+			fwd.Client = c
+
+			visit(1)
+			Eventually(renewals.Load).Should(BeEquivalentTo(1))
+
+			visit(1)
+			Eventually(renewals.Load).Should(BeEquivalentTo(2))
+			Eventually(func() *metav1.MicroTime { return renewed(c).Spec.RenewTime }).ShouldNot(BeNil())
+		})
+
+		It("forwards requests without waiting for the Lease to be renewed", func() {
+			renew := make(chan struct{})
+			DeferCleanup(func() { close(renew) })
+
+			fwd.Client = newClient(countRenewals(func(int32) error {
+				<-renew
+				return nil
+			}), pullRequest(), lease())
+
+			done := make(chan int, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				fwd.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://feature.example.com/", nil))
+				done <- rec.Code
+			}()
+
+			Eventually(done, 3*time.Second).Should(Receive(Equal(http.StatusOK)))
+			Expect(renewals.Load()).To(BeEquivalentTo(1))
+		})
+	})
+
+	DescribeTable("renews Leases often enough for deployments not to scale down while they are visited",
+		func(scaleDownAfter, interval time.Duration) {
+			Expect(renewInterval(scaleDownAfter)).To(Equal(interval))
+		},
+		Entry("a tenth of scaleDownAfter", 10*time.Minute, time.Minute),
+		Entry("at most every 5 minutes", 24*time.Hour, 5*time.Minute),
+		Entry("at least 5 seconds apart", 10*time.Second, 5*time.Second),
+		Entry("every 5 minutes when deployments never scale down", time.Duration(0), 5*time.Minute),
+	)
 
 	It("forwards the host and the forwarded headers of the ingress", func() {
 		received := make(chan *http.Request, 1)
@@ -263,7 +398,7 @@ var _ = Describe("Forwarder", func() {
 
 	Context("when the review app doesn't start within the connection timeout", func() {
 		BeforeEach(func() {
-			refusedDials = math.MaxInt32
+			refusedDials.Store(math.MaxInt32)
 			fwd.ConnectionTimeout = time.Second
 			upstream(func(w http.ResponseWriter, r *http.Request) {})
 		})

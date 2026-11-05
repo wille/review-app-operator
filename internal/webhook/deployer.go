@@ -117,26 +117,14 @@ func createOrUpdatePullRequest(
 			return nil, err
 		}
 
-		// Set the deploy information and bump activity on the existing status, preserving
-		// the hostnames and any other status set by the controller.
+		// Set the deploy information on the existing status, preserving the hostnames and any
+		// other status set by the controller. The deploy time starts the deployments that start
+		// on deploy
 		statusPatch := client.MergeFrom(existingPr.DeepCopy())
 		setDeployInfo(&existingPr.Status, desiredPr.Status)
 
 		if existingPr.Status.Deployments == nil {
 			existingPr.Status.Deployments = make(map[string]*reviewapps.DeploymentStatus)
-		}
-
-		for _, deployment := range reviewApp.Spec.Deployments {
-			status := existingPr.Status.Deployments[deployment.Name]
-			if status == nil {
-				status = &reviewapps.DeploymentStatus{}
-				existingPr.Status.Deployments[deployment.Name] = status
-			}
-
-			status.LastActive = metav1.Now()
-			if !status.IsActive {
-				status.IsActive = deployment.StartOnDeploy || reviewApp.Spec.StartOnDeploy
-			}
 		}
 
 		if err := c.Status().Patch(ctx, &existingPr, statusPatch); err != nil {

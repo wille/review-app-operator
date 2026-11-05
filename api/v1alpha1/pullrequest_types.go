@@ -40,11 +40,15 @@ type PullRequestStatus struct {
 const ConditionReconciled = "Reconciled"
 
 type DeploymentStatus struct {
+	// LastActive was the last activity recorded by earlier versions, which record the visits in a
+	// Lease named like the deployment now. The controller moves it to the Lease and clears it
 	// +optional
 	LastActive metav1.Time `json:"lastActive,omitempty"`
 
+	// IsActive was whether the deployment ran in earlier versions, where it runs while its Lease
+	// is held now. The controller clears it with LastActive
 	// +optional
-	IsActive bool `json:"isActive"`
+	IsActive bool `json:"isActive,omitempty"`
 
 	// +optional
 	Hostnames []string `json:"hostnames"`

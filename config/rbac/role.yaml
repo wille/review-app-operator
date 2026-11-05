@@ -41,6 +41,18 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - reviewapps.william.nu
   resources:
   - pullrequests

@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -11,6 +12,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,7 +20,9 @@ import (
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -57,6 +61,68 @@ func getClusterDomain() string {
 }
 
 var requestID int64
+
+// The forwarder renews the Lease of a deployment that is visited, which keeps it running for
+// scaleDownAfter. Renewals are throttled to a tenth of scaleDownAfter, within these bounds, so that
+// a deployment that is in use doesn't scale down, without writing to the API server on every request
+const (
+	minRenewInterval = 5 * time.Second
+	maxRenewInterval = 5 * time.Minute
+)
+
+// renewInterval is how often the Lease of a visited deployment that scales down after
+// scaleDownAfter is renewed. Deployments that never scale down only need visits for deleteAfter
+func renewInterval(scaleDownAfter time.Duration) time.Duration {
+	if scaleDownAfter <= 0 {
+		return maxRenewInterval
+	}
+	return min(max(scaleDownAfter/10, minRenewInterval), maxRenewInterval)
+}
+
+// renewThrottle lets a forwarder renew the Lease of a deployment once per interval
+type renewThrottle struct {
+	mu        sync.Mutex
+	renewed   map[string]time.Time
+	lastPrune time.Time
+}
+
+func newRenewThrottle() *renewThrottle {
+	return &renewThrottle{renewed: make(map[string]time.Time)}
+}
+
+// claim reports whether the Lease is to be renewed, which it is when the forwarder has not renewed
+// it in the last interval
+func (t *renewThrottle) claim(key string, now time.Time, interval time.Duration) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Forget the deployments that are no longer visited
+	if now.Sub(t.lastPrune) >= maxRenewInterval {
+		for k, renewed := range t.renewed {
+			if now.Sub(renewed) >= maxRenewInterval {
+				delete(t.renewed, k)
+			}
+		}
+		t.lastPrune = now
+	}
+
+	if renewed, ok := t.renewed[key]; ok && now.Sub(renewed) < interval {
+		return false
+	}
+
+	t.renewed[key] = now
+	return true
+}
+
+// release lets the next visit renew the Lease, after renewing it failed
+func (t *renewThrottle) release(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.renewed, key)
+}
+
+// renewals throttles the Lease renewals of all forwarders in the process
+var renewals = newRenewThrottle()
 
 // readHeaderTimeout limits how long clients may take to send the request headers
 const readHeaderTimeout = 10 * time.Second
@@ -154,32 +220,19 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doUpdate := false
-	patch := client.MergeFrom(pr.DeepCopy())
-
 	target := ""
 
-	var deploymentName string
-	for deploymentName2, status := range pr.Status.Deployments {
+	var deploymentName, deploymentSpecName string
+	for name, deploymentStatus := range pr.Status.Deployments {
 		if target != "" {
 			break
 		}
-		for _, hostname := range status.Hostnames {
+		for _, hostname := range deploymentStatus.Hostnames {
 			if hostname == r.Host {
-				deploymentName = utils.GetDeploymentName(&reviewApp, &pr, deploymentName2)
+				deploymentSpecName = name
+				deploymentName = utils.GetDeploymentName(&reviewApp, &pr, name)
 
 				target = fmt.Sprintf("%s.%s.svc.%s:%d", deploymentName, pr.Namespace, getClusterDomain(), 80)
-
-				if !status.IsActive {
-					status.IsActive = true
-					doUpdate = true
-				}
-
-				// Only patch PullRequest last active timestamp once a minute
-				if status.LastActive.Add(time.Minute).Before(time.Now()) {
-					doUpdate = true
-					status.LastActive = metav1.Now()
-				}
 
 				break
 			}
@@ -189,11 +242,22 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log = log.WithValues("deployment", deploymentName)
 
-	if doUpdate {
-		if err := c.Status().Patch(r.Context(), &pr, patch); err != nil {
-			log.Error(err, "Error updating deployment")
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+	// Renew the Lease of the deployment, which starts it when it is scaled down, and keeps it
+	// running. Most requests renew nothing, and none wait for the API server
+	if deploymentName != "" {
+		key := pr.Namespace + "/" + deploymentName
+		renewals := renewals
+
+		if renewals.claim(key, time.Now(), renewInterval(scaleDownAfter(&reviewApp, deploymentSpecName))) {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+
+				if err := renewLease(ctx, c, pr.Namespace, deploymentName); err != nil {
+					renewals.release(key)
+					log.Error(err, "Error renewing the lease of the deployment")
+				}
+			}()
 		}
 	}
 
@@ -249,6 +313,36 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// scaleDownAfter is how long a deployment of a review app runs after it was last visited
+func scaleDownAfter(reviewApp *reviewapps.ReviewAppConfig, deployment string) time.Duration {
+	for _, spec := range reviewApp.Spec.Deployments {
+		if spec.Name == deployment && spec.ScaleDownAfter.Duration != 0 {
+			return spec.ScaleDownAfter.Duration
+		}
+	}
+	return reviewApp.Spec.ScaleDownAfter.Duration
+}
+
+// holderIdentity names the forwarder that last renewed a Lease, which is its pod name
+var holderIdentity, _ = os.Hostname()
+
+// renewLease records a visit to a deployment of a review app in its Lease, which the controller
+// creates with the deployment
+func renewLease(ctx context.Context, c client.Client, namespace, name string) error {
+	patch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{
+			"renewTime":      metav1.NowMicro(),
+			"holderIdentity": holderIdentity,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	lease := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+	return c.Patch(ctx, lease, client.RawPatch(types.MergePatchType, patch))
 }
 
 // deploymentStatus describes the rollout of the deployment of a review app

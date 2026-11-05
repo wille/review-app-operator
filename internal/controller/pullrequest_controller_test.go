@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -114,6 +115,7 @@ var _ = Describe("PullRequest Controller", func() {
 			objectMeta := metav1.ObjectMeta{Name: expectedDeploymentName, Namespace: namespace}
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: objectMeta}))).To(Succeed())
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.Service{ObjectMeta: objectMeta}))).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &coordinationv1.Lease{ObjectMeta: objectMeta}))).To(Succeed())
 
 			reviewApp := &reviewapps.ReviewAppConfig{}
 			if err := k8sClient.Get(ctx, reviewAppNN, reviewApp); err == nil {
@@ -201,7 +203,7 @@ var _ = Describe("PullRequest Controller", func() {
 		AfterEach(func() {
 			// envtest runs no garbage collector to delete what the PullRequest owns
 			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
-			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
 			}
 		})
@@ -272,7 +274,7 @@ var _ = Describe("PullRequest Controller", func() {
 		AfterEach(func() {
 			// envtest runs no garbage collector to delete what the PullRequest owns
 			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
-			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
 			}
 		})
@@ -421,7 +423,7 @@ var _ = Describe("PullRequest Controller", func() {
 		AfterEach(func() {
 			// envtest runs no garbage collector to delete what the PullRequest owns
 			objectMeta := metav1.ObjectMeta{Name: deployNN.Name, Namespace: namespace}
-			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
 			}
 		})
@@ -519,7 +521,7 @@ var _ = Describe("PullRequest Controller", func() {
 		AfterEach(func() {
 			// envtest runs no garbage collector to delete what the PullRequests own
 			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, prA, "web"), Namespace: namespace}
-			for _, obj := range []client.Object{prA, prB, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}} {
+			for _, obj := range []client.Object{prA, prB, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
 			}
 		})

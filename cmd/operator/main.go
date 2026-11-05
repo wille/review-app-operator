@@ -13,12 +13,15 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -26,7 +29,6 @@ import (
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/controller"
-	"github.com/wille/review-app-operator/internal/downscaler"
 	"github.com/wille/review-app-operator/internal/forwarder"
 	"github.com/wille/review-app-operator/internal/utils"
 	webhooks "github.com/wille/review-app-operator/internal/webhook"
@@ -68,6 +70,10 @@ func main() {
 
 	cacheOpts := cache.Options{
 		DefaultNamespaces: map[string]cache.Config{},
+		ByObject: map[client.Object]cache.ByObject{
+			// Only the Leases of review apps, not those of leader elections in the namespaces
+			&coordinationv1.Lease{}: {Label: labels.SelectorFromSet(labels.Set(utils.MatchingLabels))},
+		},
 	}
 	flag.Func("namespaces", "Namespaces", func(ns string) error {
 		if ns == "" {
@@ -167,8 +173,9 @@ func main() {
 			os.Exit(1)
 		}
 		if err = (&controller.PullRequestReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
+			Client:    mgr.GetClient(),
+			Scheme:    mgr.GetScheme(),
+			APIReader: mgr.GetAPIReader(),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "PullRequest")
 			os.Exit(1)
@@ -238,13 +245,6 @@ func main() {
 		}
 		if err := mgr.Add(fwd); err != nil {
 			setupLog.Error(err, "unable to setup the forwarding proxy")
-			os.Exit(1)
-		}
-	}
-
-	if enableController {
-		if err := mgr.Add(downscaler.Downscaler{Client: mgr.GetClient()}); err != nil {
-			setupLog.Error(err, "unable to create downscaler")
 			os.Exit(1)
 		}
 	}

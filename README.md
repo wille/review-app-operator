@@ -8,11 +8,10 @@ It's intended to be the most simple solution to have fully functional dynamic st
 
 Use the [Review App Action](#review-app-action) to keep deployments in sync with Pull Requests.
 
-The Review App Operator consists of four components:
+The Review App Operator consists of three components:
 
-- **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
-- **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand. WebSockets and streamed responses like server-sent events pass through. While a review app starts, browsers loading a page get a page that reloads until it has started, and other requests get `503 Service Unavailable` with `Retry-After`
-- **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set. Review apps that have neither been deployed nor received traffic for `deleteAfter` are deleted, like when the webhook couldn't delete them as their pull request closed. The next deploy creates them again. Review apps are not deleted if `deleteAfter` is not set
+- **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync. It starts a deployment when it is visited, scales it down when it hasn't been visited for `scaleDownAfter`, and deletes review apps that have neither been deployed nor visited for `deleteAfter`, like when the webhook couldn't delete them as their pull request closed. Deployments are not scaled down if `scaleDownAfter` is not set, and review apps not deleted if `deleteAfter` is not set
+- **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand. WebSockets and streamed responses like server-sent events pass through. While a review app starts, browsers loading a page get a page that reloads until it has started, and other requests get `503 Service Unavailable` with `Retry-After`. Visits are recorded in a `Lease` named like the deployment, which a deployment holds for `scaleDownAfter` after its last visit: `kubectl get lease -l app.kubernetes.io/managed-by=review-app-controller` shows when each was last visited. The forwarder renews a Lease at most every tenth of `scaleDownAfter`, between 5 seconds and 5 minutes, so that visits barely write to the Kubernetes API
 - **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with the [Review App Action](#review-app-action)
 
 ## Installation

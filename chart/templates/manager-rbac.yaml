@@ -5,6 +5,19 @@ metadata:
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 rules:
+# The Leases record the visits to review app deployments
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - apps
   resources:
