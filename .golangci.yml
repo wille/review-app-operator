@@ -39,6 +39,10 @@ linters:
         linters:
           - dupl
           - lll
+      # Test fixtures repeat names like the review app and branch, which read better inline
+      - path: "_test\\.go$"
+        linters:
+          - goconst
 
 formatters:
   enable:
