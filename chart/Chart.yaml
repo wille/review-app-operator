@@ -1,6 +1,9 @@
 apiVersion: v2
 name: review-app-operator
 description: Review App Operator Helm chart
+# Links the chart package in the registry to this repository
+sources:
+  - https://github.com/wille/review-app-operator
 type: application
 version: 0.0.1
 appVersion: v0.0.1

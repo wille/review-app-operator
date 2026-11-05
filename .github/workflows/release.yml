@@ -68,3 +68,31 @@ jobs:
           subject-name: ghcr.io/wille/review-app-operator
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+  chart:
+    name: Push Helm chart
+    # The chart defaults to the image of the same release, so push it after the image
+    if: github.event_name == 'release'
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Package and push the chart
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          ACTOR: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Release tags are v-prefixed like the image tags, chart versions are not
+          version=${TAG#v}
+
+          helm lint chart --set webhook.ingress.host=example.com --set 'forwarder.ingress.hosts[0]=*.example.com'
+          helm package chart --version "$version" --app-version "$TAG"
+
+          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+          helm push "review-app-operator-$version.tgz" oci://ghcr.io/wille/charts
