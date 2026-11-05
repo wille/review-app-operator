@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -74,28 +75,28 @@ type WebhookServer struct {
 	PodLogs corev1client.PodsGetter
 
 	WebhookSecret string
+
+	// Serving reports whether the webhook accepts requests, for its readiness probe
+	Serving *utils.Serving
+
+	// ShutdownTimeout is how long the webhook waits for the requests in flight when it stops,
+	// like deploys that stream their progress
+	ShutdownTimeout time.Duration
 }
 
 func (wh WebhookServer) Start(ctx context.Context) error {
 	handler := http.NewServeMux()
 	handler.Handle("/v1", wh)
 
-	srv := http.Server{Addr: wh.Addr, Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
-
-	go func() {
-		<-ctx.Done()
-		log.Info("Shutting down forwarding proxy")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	ln, err := net.Listen("tcp", wh.Addr)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	err = utils.Serve(ctx, ln, srv, wh.Serving, wh.ShutdownTimeout)
+	log.Info("Stopped webhook server")
+	return err
 }
 
 // maxWebhookBodyBytes is the maximum size of a webhook request body we are

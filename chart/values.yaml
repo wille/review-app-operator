@@ -10,7 +10,11 @@ image: ghcr.io/wille/review-app-operator
 tag: ""
 
 webhook:
-  replicas: 1
+  # More than one replica keeps deploys working while a node is drained
+  replicas: 2
+
+  # How long a stopping webhook waits for deploys that stream their progress to finish
+  terminationGracePeriodSeconds: 300
 
   # The webhook secret that will be used by the CI to trigger pull request events
   secretKeyRef:
@@ -41,7 +45,11 @@ webhook:
       cpu: 10m
       memory: 32Mi
 forwarder:
-  replicas: 1
+  # More than one replica keeps review apps reachable while a node is drained
+  replicas: 2
+
+  # How long a stopping forwarder waits for the requests in flight to finish
+  terminationGracePeriodSeconds: 30
   ingress:
     ingressClassName: ""
     annotations: {}

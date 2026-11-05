@@ -1,0 +1,17 @@
+{{- if gt (int .Values.webhook.replicas) 1 }}
+# Lets nodes be drained one webhook replica at a time. With a single replica the budget would
+# block draining its node, so it is only created with more
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "chart.fullname" . }}-webhook
+  labels:
+    control-plane: webhook
+  {{- include "chart.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      control-plane: webhook
+    {{- include "chart.selectorLabels" . | nindent 6 }}
+{{- end }}

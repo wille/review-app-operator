@@ -40,6 +40,12 @@ type Forwarder struct {
 	Addr string
 	client.Client
 	ConnectionTimeout time.Duration
+
+	// Serving reports whether the forwarder accepts requests, for its readiness probe
+	Serving *utils.Serving
+
+	// ShutdownTimeout is how long the forwarder waits for the requests in flight when it stops
+	ShutdownTimeout time.Duration
 }
 
 func getClusterDomain() string {
@@ -295,20 +301,13 @@ func (fw Forwarder) Start(ctx context.Context) error {
 
 	log.Info("Starting forwarding proxy", "addr", fw.Addr)
 
-	srv := http.Server{Addr: fw.Addr, Handler: fw, ReadHeaderTimeout: readHeaderTimeout}
-
-	go func() {
-		<-ctx.Done()
-		log.Info("Shutting down forwarding proxy")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	ln, err := net.Listen("tcp", fw.Addr)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	srv := &http.Server{Handler: fw, ReadHeaderTimeout: readHeaderTimeout}
+	err = utils.Serve(ctx, ln, srv, fw.Serving, fw.ShutdownTimeout)
+	log.Info("Stopped forwarding proxy")
+	return err
 }

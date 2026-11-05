@@ -1,0 +1,17 @@
+{{- if gt (int .Values.forwarder.replicas) 1 }}
+# Lets nodes be drained one forwarder replica at a time. With a single replica the budget would
+# block draining its node, so it is only created with more
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "chart.fullname" . }}-forwarder
+  labels:
+    control-plane: forwarder
+  {{- include "chart.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      control-plane: forwarder
+    {{- include "chart.selectorLabels" . | nindent 6 }}
+{{- end }}

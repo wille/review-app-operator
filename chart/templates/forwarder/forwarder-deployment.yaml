@@ -22,13 +22,20 @@ spec:
         - --forwarder
         - --namespaces={{ join "," .Values.namespaces }}
         - --connection-timeout={{ .Values.connectionTimeout }}
-        - --health-probe-bind-address=:8081   
+        - --health-probe-bind-address=:8081
+        # Finish the requests in flight within the grace period, after the preStop sleep
+        - --graceful-shutdown-timeout={{ sub .Values.forwarder.terminationGracePeriodSeconds 10 }}s
         command:
         - /manager
         env:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}
         image: {{ .Values.image }}:{{ .Values.tag | default .Chart.AppVersion }}
+        lifecycle:
+          # Keep serving until the ingress no longer sends requests to the stopping pod
+          preStop:
+            sleep:
+              seconds: 5
         livenessProbe:
           httpGet:
             path: /healthz
@@ -40,8 +47,8 @@ spec:
           httpGet:
             path: /readyz
             port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          initialDelaySeconds: 1
+          periodSeconds: 5
         resources: {{- toYaml .Values.forwarder.resources | nindent 10
           }}
         securityContext:
@@ -52,4 +59,17 @@ spec:
       securityContext:
         runAsNonRoot: true
       serviceAccountName: {{ include "chart.fullname" . }}-forwarder
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.forwarder.terminationGracePeriodSeconds }}
+      # Spread the replicas over nodes and zones, so that losing one doesn't take them all
+      topologySpreadConstraints:
+      {{- range list "kubernetes.io/hostname" "topology.kubernetes.io/zone" }}
+      - maxSkew: 1
+        topologyKey: {{ . }}
+        whenUnsatisfiable: ScheduleAnyway
+        matchLabelKeys:
+        - pod-template-hash
+        labelSelector:
+          matchLabels:
+            control-plane: forwarder
+          {{- include "chart.selectorLabels" $ | nindent 12 }}
+      {{- end }}

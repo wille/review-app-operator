@@ -28,6 +28,7 @@ import (
 	"github.com/wille/review-app-operator/internal/controller"
 	"github.com/wille/review-app-operator/internal/downscaler"
 	"github.com/wille/review-app-operator/internal/forwarder"
+	"github.com/wille/review-app-operator/internal/utils"
 	webhooks "github.com/wille/review-app-operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
@@ -51,6 +52,10 @@ func main() {
 
 	var connectionTimeout time.Duration
 	flag.DurationVar(&connectionTimeout, "connection-timeout", time.Second*10, "Timeout connecting to PR apps")
+
+	var gracefulShutdownTimeout time.Duration
+	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", 30*time.Second,
+		"How long to wait for requests in flight, like deploys that stream their progress, when stopping")
 
 	var metricsAddr string
 	var probeAddr string
@@ -122,6 +127,9 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 
+		// The forwarder and webhook finish their requests in flight before the caches stop
+		GracefulShutdownTimeout: &gracefulShutdownTimeout,
+
 		// Only the controller-manager needs leader election
 		LeaderElection:   enableController && enableLeaderElection,
 		LeaderElectionID: "80807133.reviewapps.william.nu",
@@ -177,6 +185,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The forwarder and webhook only get traffic while they accept requests
+	webhookServing, forwarderServing := &utils.Serving{}, &utils.Serving{}
+	if enableDeployWebhook {
+		if err := mgr.AddReadyzCheck("webhook", webhookServing.Check); err != nil {
+			setupLog.Error(err, "unable to set up ready check")
+			os.Exit(1)
+		}
+	}
+	if enableForwarder {
+		if err := mgr.AddReadyzCheck("forwarder", forwarderServing.Check); err != nil {
+			setupLog.Error(err, "unable to set up ready check")
+			os.Exit(1)
+		}
+	}
+
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
 	if enableDeployWebhook && webhookSecret == "" {
 		setupLog.Error(err, "env WEBHOOK_SECRET not set")
@@ -191,11 +214,13 @@ func main() {
 		}
 
 		deployWebhook := webhooks.WebhookServer{
-			Client:        mgr.GetClient(),
-			PodReader:     mgr.GetAPIReader(),
-			PodLogs:       clientset.CoreV1(),
-			Addr:          ":8080",
-			WebhookSecret: webhookSecret,
+			Client:          mgr.GetClient(),
+			PodReader:       mgr.GetAPIReader(),
+			PodLogs:         clientset.CoreV1(),
+			Addr:            ":8080",
+			WebhookSecret:   webhookSecret,
+			Serving:         webhookServing,
+			ShutdownTimeout: gracefulShutdownTimeout,
 		}
 		if err := mgr.Add(deployWebhook); err != nil {
 			setupLog.Error(err, "unable to create pull request webhook server")
@@ -208,6 +233,8 @@ func main() {
 			Client:            mgr.GetClient(),
 			Addr:              ":6969",
 			ConnectionTimeout: connectionTimeout,
+			Serving:           forwarderServing,
+			ShutdownTimeout:   gracefulShutdownTimeout,
 		}
 		if err := mgr.Add(fwd); err != nil {
 			setupLog.Error(err, "unable to setup the forwarding proxy")
