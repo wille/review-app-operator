@@ -1,0 +1,20 @@
+name: E2E
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Smoke test in Kind
+    # The runner image has Kind, Helm, kubectl and Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Builds the operator image, installs the chart in a Kind cluster of its own and visits a review app
+      - run: make test-e2e

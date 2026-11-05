@@ -77,7 +77,7 @@ KIND_KUBECONFIG ?= $(LOCALBIN)/kind-$(KIND_CLUSTER).kubeconfig
 test-e2e: $(LOCALBIN) ## Run the e2e tests in a Kind cluster of their own, creating it when missing.
 	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
 	@$(KIND) get clusters 2>/dev/null | grep -qx "$(KIND_CLUSTER)" || $(KIND) create cluster --name "$(KIND_CLUSTER)" --kubeconfig "$(KIND_KUBECONFIG)"
-	KIND_CLUSTER="$(KIND_CLUSTER)" go test -tags e2e ./test/e2e/ -v -ginkgo.v
+	KIND_CLUSTER="$(KIND_CLUSTER)" go test -tags e2e ./test/e2e/ -timeout 30m -v -ginkgo.v
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Delete the Kind cluster of the e2e tests.
