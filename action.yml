@@ -27,7 +27,18 @@ inputs:
 outputs:
   review_app_url:
     description: The URL of the review app
+    value: ${{ steps.webhook.outputs.review_app_url }}
 
+# Runs the script directly on the runner, which needs bash, curl, jq and openssl
 runs:
-  using: docker
-  image: Dockerfile.action
+  using: composite
+  steps:
+    - id: webhook
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/action-entrypoint.sh"
+      env:
+        INPUT_REVIEW_APP_NAME: ${{ inputs.review_app_name }}
+        INPUT_REVIEW_APP_NAMESPACE: ${{ inputs.review_app_namespace }}
+        INPUT_WEBHOOK_URL: ${{ inputs.webhook_url }}
+        INPUT_WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
+        INPUT_IMAGE: ${{ inputs.image }}

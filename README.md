@@ -114,6 +114,8 @@ Create this ReviewAppConfig
 
 The Review App Action deploys the pull request image when a pull request is opened or updated, and deletes the review app when it is closed. Build and push the image before the action runs.
 
+The action runs directly on the runner and needs `bash`, `curl`, `jq` and `openssl`, which GitHub-hosted runners have.
+
 ```yaml
 name: Review App
 

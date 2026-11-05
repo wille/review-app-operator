@@ -4,14 +4,20 @@ VERSION=0.0.1
 
 set -o pipefail
 
-TMP=${RUNNER_TEMP:-/tmp/review-app-action}
-mkdir -p "$TMP" || (echo "Failed to mkdir $TMP" && exit 1)
+# The runner's temp directory is shared with the other steps of the job
+response=$(mktemp "${RUNNER_TEMP:-/tmp}/review-app-action.XXXXXX") || { echo "Failed to create a temp file"; exit 1; }
+trap 'rm -f "$response"' EXIT
 
 [[ "$GITHUB_EVENT_NAME" != "pull_request" ]] && echo "Only 'pull_request' workflows are supported" && exit 1
 [[ -z "$GITHUB_EVENT_PATH" ]] && echo "Missing GITHUB_EVENT_PATH" && exit 1
 [[ -z "$INPUT_WEBHOOK_SECRET" ]] && echo "Missing INPUT_WEBHOOK_SECRET" && exit 1
 [[ -z "$INPUT_WEBHOOK_URL" ]] && echo "Missing INPUT_WEBHOOK_URL" && exit 1
 [[ -z "$INPUT_REVIEW_APP_NAME" ]] && echo "Missing INPUT_REVIEW_APP_NAME" && exit 1
+
+# The action runs directly on the runner
+for tool in curl jq openssl; do
+    command -v "$tool" > /dev/null || { echo "Missing $tool on the runner"; exit 1; }
+done
 
 github_event_data=$(cat "$GITHUB_EVENT_PATH")
 
@@ -67,15 +73,9 @@ webhook_data=$(jq \
 ) || { echo "Failed to create the webhook payload"; exit 1; }
 
 WEBHOOK_SIGNATURE_256=$(echo -n "$webhook_data" | \
-    openssl dgst -sha256 -hmac "$INPUT_WEBHOOK_SECRET" -binary | \
-    xxd -p | \
-    tr -d '\n'
-)
-
-if [ "$INPUT_DEBUG" = true ]; then
-    echo "Webhook data: $webhook_data"
-    echo "Webhook signature: $WEBHOOK_SIGNATURE_256"
-fi
+    openssl dgst -sha256 -hmac "$INPUT_WEBHOOK_SECRET" -r | \
+    cut -d ' ' -f 1
+) || { echo "Failed to sign the webhook payload"; exit 1; }
 
 case $method in
     POST)
@@ -85,7 +85,7 @@ case $method in
             -H "X-Hub-Signature-256: sha256=$WEBHOOK_SIGNATURE_256" \
             -X POST \
             --data "$webhook_data" "$INPUT_WEBHOOK_URL/v1" \
-            2>&1 | tee "$TMP/output" # Stream the response to stdout and save it so we can parse it
+            2>&1 | tee "$response" # Stream the response to stdout and save it so we can parse it
 
         curl_status=$?
 
@@ -95,7 +95,7 @@ case $method in
             # The last line of a successful response is the review app URL.
             # Errors after the response has started streaming can't change the
             # status code, so anything else means the deployment failed
-            last_line=$(tail -n1 "$TMP/output")
+            last_line=$(tail -n1 "$response")
             if [[ "$last_line" == "Review App URL: "* ]]; then
                 set_output "review_app_url=${last_line#Review App URL: }"
             else
