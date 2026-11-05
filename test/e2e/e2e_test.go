@@ -1,3 +1,5 @@
+//go:build e2e
+
 /*
 Copyright 2024.
 
@@ -27,7 +29,8 @@ import (
 	"github.com/wille/review-app-operator/test/utils"
 )
 
-const namespace = "review-app-operator-system"
+// namespace is not the one of real installs, in case the tests ever reach a real cluster
+const namespace = "review-app-operator-e2e"
 
 var _ = Describe("controller", Ordered, func() {
 	BeforeAll(func() {

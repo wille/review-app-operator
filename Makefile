@@ -67,10 +67,21 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
-.PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
-test-e2e:
-	go test ./test/e2e/ -v -ginkgo.v
+# The e2e tests delete what they deploy, so they only run in a Kind cluster of their own, never
+# in the current kube context. Kind writes its kubeconfig to bin/ and leaves ~/.kube/config alone.
+KIND ?= kind
+KIND_CLUSTER ?= review-app-operator-test-e2e
+KIND_KUBECONFIG ?= $(LOCALBIN)/kind-$(KIND_CLUSTER).kubeconfig
+
+.PHONY: test-e2e
+test-e2e: $(LOCALBIN) ## Run the e2e tests in a Kind cluster of their own, creating it when missing.
+	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
+	@$(KIND) get clusters 2>/dev/null | grep -qx "$(KIND_CLUSTER)" || $(KIND) create cluster --name "$(KIND_CLUSTER)" --kubeconfig "$(KIND_KUBECONFIG)"
+	KIND_CLUSTER="$(KIND_CLUSTER)" go test -tags e2e ./test/e2e/ -v -ginkgo.v
+
+.PHONY: cleanup-test-e2e
+cleanup-test-e2e: ## Delete the Kind cluster of the e2e tests.
+	$(KIND) delete cluster --name "$(KIND_CLUSTER)" --kubeconfig "$(KIND_KUBECONFIG)"
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

@@ -17,16 +17,106 @@ limitations under the License.
 package utils
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
+	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Run executes the provided command within this context
+// DefaultKindCluster is the Kind cluster the e2e tests run in, unless KIND_CLUSTER names another
+const DefaultKindCluster = "review-app-operator-test-e2e"
+
+// kubeconfig is the kubeconfig of the Kind cluster that every command runs with, set by
+// UseKindCluster. It only holds the Kind cluster, so that the e2e tests can never act on the
+// clusters of the current kube context
+var kubeconfig string
+
+// helmClusterEnv are the environment variables that point helm at a cluster outside the kubeconfig
+var helmClusterEnv = []string{
+	"HELM_KUBECONTEXT",
+	"HELM_KUBEAPISERVER",
+	"HELM_KUBETOKEN",
+	"HELM_KUBECAFILE",
+	"HELM_KUBEASUSER",
+	"HELM_KUBEASGROUPS",
+	"HELM_KUBETLS_SERVER_NAME",
+	"HELM_KUBEINSECURE_SKIP_TLS_VERIFY",
+}
+
+// KindCluster returns the name of the Kind cluster the e2e tests run in
+func KindCluster() string {
+	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok && v != "" {
+		return v
+	}
+	return DefaultKindCluster
+}
+
+// UseKindCluster writes the kubeconfig of the Kind cluster to dir and makes every command
+// run by Run use it, after making sure that it only reaches a cluster on this machine
+func UseKindCluster(dir string) error {
+	cluster := KindCluster()
+
+	config, err := exec.Command("kind", "get", "kubeconfig", "--name", cluster).Output()
+	if err != nil {
+		return fmt.Errorf("the e2e tests only run in the Kind cluster %q, create it with make test-e2e: %w", cluster, err)
+	}
+
+	if err := checkLocalCluster(config, "kind-"+cluster); err != nil {
+		return err
+	}
+
+	path := filepath.Join(dir, "kubeconfig")
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		return err
+	}
+
+	kubeconfig = path
+	return nil
+}
+
+// checkLocalCluster checks that a kubeconfig only has the context of the Kind cluster, and that
+// its API server is on this machine like Kind's
+func checkLocalCluster(kubeconfig []byte, context string) error {
+	config, err := clientcmd.Load(kubeconfig)
+	if err != nil {
+		return err
+	}
+
+	if config.CurrentContext != context || len(config.Contexts) != 1 || len(config.Clusters) != 1 {
+		return fmt.Errorf("refusing to run the e2e tests: the kubeconfig must only have the context %q", context)
+	}
+
+	for _, cluster := range config.Clusters {
+		server, err := url.Parse(cluster.Server)
+		if err != nil {
+			return err
+		}
+
+		host := server.Hostname()
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("refusing to run the e2e tests against %s, which is not a Kind cluster on this machine",
+				cluster.Server)
+		}
+	}
+
+	return nil
+}
+
+// Run executes the provided command within this context. Commands only run once UseKindCluster
+// has pinned the Kind cluster, and always with its kubeconfig
 func Run(cmd *exec.Cmd) ([]byte, error) {
+	if kubeconfig == "" {
+		return nil, errors.New("refusing to run commands before UseKindCluster pins the e2e tests to the Kind cluster")
+	}
+
 	dir, _ := GetProjectDir()
 	cmd.Dir = dir
 
@@ -34,7 +124,15 @@ func Run(cmd *exec.Cmd) ([]byte, error) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %s\n", err)
 	}
 
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
+	cmd.Env = []string{"GO111MODULE=on", "KUBECONFIG=" + kubeconfig}
+	for _, env := range os.Environ() {
+		name, _, _ := strings.Cut(env, "=")
+		if name == "KUBECONFIG" || slices.Contains(helmClusterEnv, name) {
+			continue
+		}
+		cmd.Env = append(cmd.Env, env)
+	}
+
 	command := strings.Join(cmd.Args, " ")
 	_, _ = fmt.Fprintf(GinkgoWriter, "running: %s\n", command)
 	output, err := cmd.CombinedOutput()
@@ -45,14 +143,9 @@ func Run(cmd *exec.Cmd) ([]byte, error) {
 	return output, nil
 }
 
-// LoadImageToKindCluster loads a local docker image to the kind cluster
+// LoadImageToKindClusterWithName loads a local docker image to the Kind cluster
 func LoadImageToKindClusterWithName(name string) error {
-	cluster := "kind"
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
-	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
-	cmd := exec.Command("kind", kindOptions...)
+	cmd := exec.Command("kind", "load", "docker-image", name, "--name", KindCluster())
 	_, err := Run(cmd)
 	return err
 }

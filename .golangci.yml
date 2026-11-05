@@ -2,6 +2,9 @@ version: "2"
 
 run:
   timeout: 5m
+  # Lint the e2e tests, which plain go test leaves out
+  build-tags:
+    - e2e
   allow-parallel-runners: true
 
 linters:
