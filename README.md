@@ -11,7 +11,7 @@ Use the [Review App Action](#review-app-action) to keep deployments in sync with
 The Review App Operator consists of four components:
 
 - **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
-- **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand
+- **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand. WebSockets and streamed responses like server-sent events pass through. While a review app starts, browsers loading a page get a page that reloads until it has started, and other requests get `503 Service Unavailable` with `Retry-After`
 - **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set
 - **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with the [Review App Action](#review-app-action)
 

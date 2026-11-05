@@ -4,51 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// Hop-by-hop headers. These are removed when sent to the backend.
-// http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
-var hopHeaders = []string{
-	"Connection",
-	"Keep-Alive",
-	"Proxy-Authenticate",
-	"Proxy-Authorization",
-	"Te", // canonicalized version of "TE"
-	"Trailers",
-	"Transfer-Encoding",
-	"Upgrade",
-}
-
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
-}
-
-func delHopHeaders(header http.Header) {
-	for _, h := range hopHeaders {
-		header.Del(h)
-	}
-}
+// forwardedHeaders are set by the ingress in front of the forwarder. The reverse proxy removes
+// them from the request to the review app, so they are copied over
+var forwardedHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
 
 func appendHostToXForwardHeader(header http.Header, host string) {
 	if prior, ok := header["X-Forwarded-For"]; ok {
@@ -76,12 +55,55 @@ var requestID int64
 // readHeaderTimeout limits how long clients may take to send the request headers
 const readHeaderTimeout = 10 * time.Second
 
-// httpClient is shared across all proxied requests so that connections to the
+// retryInterval is how often the forwarder tries to connect to a review app that is starting
+const retryInterval = time.Second
+
+// transport is shared across all proxied requests so that connections to the
 // upstream review app services can be reused.
-var httpClient = &http.Client{
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
+var transport http.RoundTripper = http.DefaultTransport.(*http.Transport).Clone()
+
+// errNotStarted is returned when a review app could not be connected to within the connection timeout
+var errNotStarted = errors.New("the review app did not start in time")
+
+// startingTransport connects to a review app, and retries while it can't be connected to
+// because it is starting
+type startingTransport struct {
+	timeout time.Duration
+
+	// waiting is called for every failed connection attempt
+	waiting func(attempt int, err error)
+}
+
+func (t startingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The transport closes the request body even when it fails to connect, but nothing has
+	// been read from it then, so the body is reused for every connection attempt while
+	// the review app is scaling up
+	if req.Body != nil && req.Body != http.NoBody {
+		req.Body = io.NopCloser(req.Body)
+	}
+
+	timeout := time.NewTimer(t.timeout)
+	defer timeout.Stop()
+
+	for attempt := 0; ; attempt++ {
+		resp, err := transport.RoundTrip(req.Clone(req.Context()))
+
+		// Only retry while the review app can't be connected to. Once the request
+		// has been sent it may have been processed, and the body has been read
+		if err == nil || !isDialError(err) {
+			return resp, err
+		}
+
+		t.waiting(attempt, err)
+
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-timeout.C:
+			return nil, fmt.Errorf("%w: %w", errNotStarted, err)
+		case <-time.After(retryInterval):
+		}
+	}
 }
 
 func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -169,122 +191,97 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	serviceHostname := target
+	deployment := client.ObjectKey{Namespace: pr.Namespace, Name: deploymentName}
 
-	timeout, cancel := context.WithTimeout(r.Context(), fwd.ConnectionTimeout)
-	defer cancel()
+	// The reverse proxy passes WebSocket upgrades through and sends streamed responses,
+	// like server-sent events, to the client as the review app writes them
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(p *httputil.ProxyRequest) {
+			// The Host header is kept, so that review apps can serve many hosts
+			p.Out.URL.Scheme = "http"
+			p.Out.URL.Host = target
 
-	//http: Request.RequestURI can't be set in client requests.
-	//http://golang.org/src/pkg/net/http/client.go
-	r.RequestURI = ""
-	r.URL.Scheme = "http"
-	r.URL.Host = serviceHostname
-	delHopHeaders(r.Header)
-
-	if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		appendHostToXForwardHeader(r.Header, clientIP)
-	}
-
-	// The label values are "normalized"
-	r.Header.Set("X-Branch", pr.Labels["app.kubernetes.io/name"])
-	r.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
-
-	// The transport closes the request body even when it fails to connect, but nothing has
-	// been read from it then, so the body is reused for every connection attempt while
-	// the review app is scaling up
-	if r.Body != http.NoBody {
-		r.Body = io.NopCloser(r.Body)
-	}
-
-	attempt := 0
-
-	for {
-		select {
-		// connectionTimeout
-		case <-timeout.Done():
-			// Update the deployment to be able to read the latest status
-			var deployment appsv1.Deployment
-			if err := c.Get(r.Context(), client.ObjectKey{
-				Namespace: pr.Namespace,
-				Name:      deploymentName,
-			}, &deployment); err != nil {
-				log.Error(err, "Waiting for deployment")
-				http.Error(w, "Waiting for deployment", http.StatusInternalServerError)
-				return
+			for _, header := range forwardedHeaders {
+				if values, ok := p.In.Header[header]; ok {
+					p.Out.Header[header] = values
+				}
 			}
-			status, _, _ := utils.GetDeploymentStatus(&deployment)
 
-			log.Info(fmt.Sprintf("Upstream timeout: %s", strings.Trim(status, "\n")))
+			if clientIP, _, err := net.SplitHostPort(p.In.RemoteAddr); err == nil {
+				appendHostToXForwardHeader(p.Out.Header, clientIP)
+			}
 
-			// This page is sent when the Review App was not scaled up within the `connectionTimeout` limit.
-			// Later we can expand it to automatically read deployment status updates and automatically refresh.
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprintf(w, `<html>
-			<head>
-				<title>Loading...</title>
-				<meta http-equiv="refresh" content="5">
-			</head>
-			<body>
-				<p>Connecting to review app...</p>
-				<p>%s</p>
-			</body>
-			</html>`, status)
-			return
-		// Client connection reset
-		case <-r.Context().Done():
-			log.Info("Connection reset")
-			return
-		default:
-		}
-
-		resp, err := httpClient.Do(r.Clone(r.Context()))
-		if err != nil {
-			// Only retry while the review app can't be connected to. Once the request
-			// has been sent it may have been processed, and the body has been read
-			if !isDialError(err) {
+			// The label values are "normalized"
+			p.Out.Header.Set("X-Branch", pr.Labels["app.kubernetes.io/name"])
+			p.Out.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
+		},
+		Transport: startingTransport{
+			timeout: fwd.ConnectionTimeout,
+			waiting: func(attempt int, err error) {
+				if attempt%5 == 0 {
+					log.Info(fmt.Sprintf("Connection attempt: %s: %s", fwd.deploymentStatus(r.Context(), log, deployment), err))
+				}
+			},
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			log.Info("Forwarding response", "status", resp.Status)
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			switch {
+			case errors.Is(err, errNotStarted):
+				status := fwd.deploymentStatus(r.Context(), log, deployment)
+				log.Info(fmt.Sprintf("Upstream timeout: %s", status))
+				notStartedResponse(w, r, status)
+			case errors.Is(err, context.Canceled):
+				log.Info("Connection reset")
+			default:
 				log.Error(err, "Error forwarding request")
 				http.Error(w, "Bad gateway", http.StatusBadGateway)
-				return
 			}
-
-			if attempt%5 == 0 {
-				var deployment appsv1.Deployment
-				if _err := c.Get(r.Context(), types.NamespacedName{
-					Namespace: pr.Namespace,
-					Name:      deploymentName,
-				}, &deployment); _err != nil {
-					log.Error(_err, "Waiting for deployment")
-				} else {
-					status, _, _ := utils.GetDeploymentStatus(&deployment)
-					log.Info(fmt.Sprintf("Connection attempt: %s: %s", strings.Trim(status, "\n"), err.Error()))
-				}
-
-			}
-
-			attempt++
-
-			// Delay before trying again
-			time.Sleep(time.Second)
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		delHopHeaders(resp.Header)
-
-		copyHeader(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-
-		_, err = io.Copy(w, resp.Body)
-		if err != nil {
-			log.Error(err, "Error copying response body")
-			return
-		}
-
-		log.Info("Request finished", "status", resp.Status)
-		break
+		},
 	}
+
+	proxy.ServeHTTP(w, r)
+}
+
+// deploymentStatus describes the rollout of the deployment of a review app
+func (fwd Forwarder) deploymentStatus(ctx context.Context, log logr.Logger, key client.ObjectKey) string {
+	var deployment appsv1.Deployment
+	if err := fwd.Get(ctx, key, &deployment); err != nil {
+		log.Error(err, "Error getting deployment")
+		return ""
+	}
+
+	status, _, _ := utils.GetDeploymentStatus(&deployment)
+	return strings.Trim(status, "\n")
+}
+
+// notStartedResponse is sent when the review app was not scaled up within the connection timeout.
+// Browsers loading a page get a page that reloads until the review app has started, while other
+// requests, like API calls, are told to retry later
+func notStartedResponse(w http.ResponseWriter, r *http.Request, status string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	if r.Method != http.MethodGet || !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "The review app is starting, retry later: "+status, http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprintf(w, `<html>
+	<head>
+		<title>Loading...</title>
+		<meta http-equiv="refresh" content="5">
+	</head>
+	<body>
+		<p>Connecting to review app...</p>
+		<p>%s</p>
+	</body>
+	</html>`, html.EscapeString(status))
 }
 
 // isDialError reports whether err is a failure to connect to the review app
