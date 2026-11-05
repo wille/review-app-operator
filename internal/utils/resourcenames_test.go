@@ -89,7 +89,13 @@ var _ = Describe("Hostname templates", func() {
 
 	It("should require the branch name or the random ID in a template", func() {
 		_, err := GetHostnameFromTemplate("{{.ReviewAppConfig}}.review.example.com", deploymentName, pr, reviewApp)
-		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(ErrInvalidHostTemplate))
+	})
+
+	It("should name an unknown variable in the error", func() {
+		_, err := GetHostnameFromTemplate("{{.BranchName}}-{{.RandomId}}.review.example.com", deploymentName, pr, reviewApp)
+		Expect(err).To(MatchError(ErrInvalidHostTemplate))
+		Expect(err).To(MatchError("invalid host template {{.BranchName}}-{{.RandomId}}.review.example.com: unknown variable {{.RandomId}}"))
 	})
 
 	Context("with a random ID", func() {

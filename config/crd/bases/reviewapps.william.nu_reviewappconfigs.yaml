@@ -35,6 +35,7 @@ spec:
                   properties:
                     hostTemplates:
                       items:
+                        pattern: ^([a-z0-9.-]|\{\{\.(ReviewAppConfig|BranchName|DeploymentName|PullRequestNumber|RandomID)\}\})*\{\{\.(BranchName|RandomID)\}\}([a-z0-9.-]|\{\{\.(ReviewAppConfig|BranchName|DeploymentName|PullRequestNumber|RandomID)\}\})*$
                         type: string
                       minItems: 1
                       type: array

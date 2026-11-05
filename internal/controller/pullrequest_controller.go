@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 
@@ -25,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -76,9 +78,11 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	var reviewApp reviewapps.ReviewAppConfig
 	if err := r.Get(ctx, types.NamespacedName{Name: pr.Spec.ReviewAppConfigRef, Namespace: req.Namespace}, &reviewApp); err != nil {
 		if apierrors.IsNotFound(err) {
-			// No ReviewAppConfig for reviewAppRef found
+			// No ReviewAppConfig for reviewAppRef found. The PullRequest is reconciled again when it is created
 			log.Error(nil, "ReviewAppConfig not found", "reviewAppRef", pr.Spec.ReviewAppConfigRef)
-			return ctrl.Result{}, nil
+			patch := client.MergeFrom(pr.DeepCopy())
+			setReconciledCondition(pr, fmt.Errorf("%w: %s", errReviewAppConfigNotFound, pr.Spec.ReviewAppConfigRef))
+			return ctrl.Result{}, r.Status().Patch(ctx, pr, patch)
 		}
 		return ctrl.Result{}, err
 	}
@@ -135,19 +139,73 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Loop all desired deployments in the ReviewAppConfig spec
+	var reconcileErr error
 	for _, deploymentSpec := range reviewApp.Spec.Deployments {
-		if err := r.reconcileDeployment(ctx, &reviewApp, pr, deploymentSpec); err != nil {
-			return ctrl.Result{}, err
+		if reconcileErr = r.reconcileDeployment(ctx, &reviewApp, pr, deploymentSpec); reconcileErr != nil {
+			break
 		}
 	}
+
+	// Record the error on the PullRequest, where the webhook reports it to CI
+	setReconciledCondition(pr, reconcileErr)
 
 	if !equality.Semantic.DeepEqual(existingPr.Status, pr.Status) {
 		if err := r.Status().Patch(ctx, pr, patch); err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, errors.Join(reconcileErr, err)
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, reconcileErr
+}
+
+// Reasons of the Reconciled condition
+const (
+	reasonReconciled              = "Reconciled"
+	reasonReviewAppConfigNotFound = "ReviewAppConfigNotFound"
+	reasonInvalidHostTemplate     = "InvalidHostTemplate"
+	reasonNameConflict            = "NameConflict"
+	reasonReconcileFailed         = "ReconcileFailed"
+)
+
+var (
+	errReviewAppConfigNotFound = errors.New("ReviewAppConfig not found")
+
+	// errNotControlled is returned when a deployment or service of the review app belongs to
+	// something else, as different branch names can be truncated to the same names
+	errNotControlled = errors.New("is not controlled by PullRequest")
+)
+
+// setReconciledCondition records on the PullRequest status whether it could be reconciled
+func setReconciledCondition(pr *reviewapps.PullRequest, err error) {
+	condition := metav1.Condition{
+		Type:               reviewapps.ConditionReconciled,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonReconciled,
+		ObservedGeneration: pr.Generation,
+	}
+
+	if err != nil {
+		condition.Status = metav1.ConditionFalse
+		condition.Message = err.Error()
+
+		switch {
+		case errors.Is(err, errReviewAppConfigNotFound):
+			condition.Reason = reasonReviewAppConfigNotFound
+		case errors.Is(err, utils.ErrInvalidHostTemplate):
+			condition.Reason = reasonInvalidHostTemplate
+		case errors.Is(err, errNotControlled):
+			condition.Reason = reasonNameConflict
+		default:
+			condition.Reason = reasonReconcileFailed
+		}
+	}
+
+	// The deployment statuses are required by the CRD
+	if pr.Status.Deployments == nil {
+		pr.Status.Deployments = make(map[string]*reviewapps.DeploymentStatus)
+	}
+
+	meta.SetStatusCondition(&pr.Status.Conditions, condition)
 }
 
 // reconcileDeployment ensures the Deployment and its Service for a single
@@ -242,7 +300,7 @@ func (r *PullRequestReconciler) reconcileDeployment(
 	} else {
 		// Different branch names can be truncated to the same deployment name
 		if !metav1.IsControlledBy(&runningDeployment, pr) {
-			return fmt.Errorf("deployment %s is not controlled by PullRequest %s", deploymentName, pr.Name)
+			return fmt.Errorf("deployment %s %w %s", deploymentName, errNotControlled, pr.Name)
 		}
 
 		patch := client.MergeFrom(runningDeployment.DeepCopy())
@@ -345,7 +403,7 @@ func (r *PullRequestReconciler) reconcileService(
 
 	// Different branch names can be truncated to the same service name
 	if !metav1.IsControlledBy(&activeSvc, pr) {
-		return fmt.Errorf("service %s is not controlled by PullRequest %s", deploymentName, pr.Name)
+		return fmt.Errorf("service %s %w %s", deploymentName, errNotControlled, pr.Name)
 	}
 
 	// Service labels or spec differs from desired spec

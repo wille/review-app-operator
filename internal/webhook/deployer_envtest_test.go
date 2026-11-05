@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
@@ -104,7 +105,7 @@ var _ = Describe("Deploy webhook with an API server", Ordered, func() {
 			deployCtx, deployCancel := context.WithTimeout(ctx, time.Second)
 			defer deployCancel()
 
-			_, err := createOrUpdatePullRequest(deployCtx, c, reviewApp, WebhookBody{
+			_, err := createOrUpdatePullRequest(deployCtx, c, podInspector{}, reviewApp, WebhookBody{
 				BranchName:        "feature",
 				Image:             "nginx:2",
 				PullRequestNumber: 42,
@@ -131,5 +132,38 @@ var _ = Describe("Deploy webhook with an API server", Ordered, func() {
 		By("updating the PullRequest")
 		deploy("https://github.com/bob")
 		expectStatus("https://github.com/bob")
+	})
+
+	It("fails the deploy with the error of the controller", func() {
+		DeferCleanup(func(gracePeriod time.Duration) { reconcileErrorGracePeriod = gracePeriod }, reconcileErrorGracePeriod)
+		reconcileErrorGracePeriod = 0
+
+		// Valid for the CRD, but too long for a DNS label with the random ID
+		reviewApp := &reviewapps.ReviewAppConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "failing", Namespace: "default"},
+			Spec: reviewapps.ReviewAppConfigSpec{
+				Deployments: []reviewapps.Deployments{{
+					Name:                "web",
+					TargetContainerName: "web",
+					TargetContainerPort: 80,
+					HostTemplates:       []string{strings.Repeat("a", 60) + "-{{.RandomID}}.example.com"},
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "web", Image: "nginx:1"}},
+						},
+					},
+				}},
+			},
+		}
+		Expect(c.Create(ctx, reviewApp)).To(Succeed())
+
+		deployCtx, deployCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer deployCancel()
+
+		_, err := createOrUpdatePullRequest(deployCtx, c, podInspector{}, reviewApp, WebhookBody{
+			BranchName: "feature",
+			Image:      "nginx:2",
+		}, httptest.NewRecorder())
+		Expect(err).To(MatchError(ContainSubstring("the review app can't be deployed: invalid host template")))
 	})
 })

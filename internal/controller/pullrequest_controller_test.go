@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -297,7 +298,92 @@ var _ = Describe("PullRequest Controller", func() {
 					id+".random.example.com",
 					"mobile-feature-login-"+id+".random.example.com",
 				))
+
+				condition := meta.FindStatusCondition(got.Status.Conditions, reviewapps.ConditionReconciled)
+				g.Expect(condition).NotTo(BeNil())
+				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(condition.ObservedGeneration).To(Equal(got.Generation))
 			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+	})
+
+	Context("When a PullRequest can't be reconciled", func() {
+		const namespace = "default"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var pr *reviewapps.PullRequest
+
+		newReviewApp := func(hostTemplate string) *reviewapps.ReviewAppConfig {
+			return &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "failing", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates:       []string{hostTemplate},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+							},
+						},
+					}},
+				},
+			}
+		}
+
+		BeforeEach(func() {
+			pr = &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "failing-feature", Namespace: namespace},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "failing", BranchName: "feature", ImageName: "nginx:test"},
+			}
+		})
+
+		AfterEach(func() {
+			for _, obj := range []client.Object{pr, &reviewapps.ReviewAppConfig{ObjectMeta: metav1.ObjectMeta{Name: "failing", Namespace: namespace}}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		expectCondition := func(reason, message string) {
+			Eventually(func(g Gomega) {
+				var got reviewapps.PullRequest
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &got)).To(Succeed())
+
+				condition := meta.FindStatusCondition(got.Status.Conditions, reviewapps.ConditionReconciled)
+				g.Expect(condition).NotTo(BeNil())
+				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(condition.Reason).To(Equal(reason))
+				g.Expect(condition.Message).To(ContainSubstring(message))
+				g.Expect(condition.ObservedGeneration).To(Equal(got.Generation))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		}
+
+		It("records an invalid host template on the PullRequest", func() {
+			// Valid for the CRD, but too long for a DNS label with the random ID
+			reviewApp = newReviewApp(strings.Repeat("a", 60) + "-{{.RandomID}}.example.com")
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			expectCondition("InvalidHostTemplate", "too long for a DNS label")
+		})
+
+		It("records a missing ReviewAppConfig on the PullRequest", func() {
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			expectCondition("ReviewAppConfigNotFound", "ReviewAppConfig not found: failing")
+		})
+
+		It("rejects host templates with unknown variables or without the branch name or random ID", func() {
+			for _, template := range []string{
+				"web-{{.RandomId}}.example.com",
+				"web-{{.BranchName}}-{{.Unknown}}.example.com",
+				"web.example.com",
+				"Web-{{.BranchName}}.example.com",
+			} {
+				err := k8sClient.Create(ctx, newReviewApp(template))
+				Expect(errors.IsInvalid(err)).To(BeTrue(), template)
+			}
 		})
 	})
 

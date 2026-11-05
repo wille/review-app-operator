@@ -8,11 +8,13 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -29,6 +31,7 @@ func writeFlush(w http.ResponseWriter, s string) {
 func createOrUpdatePullRequest(
 	ctx context.Context,
 	c client.Client,
+	pods podInspector,
 	reviewApp *reviewapps.ReviewAppConfig,
 	webhook WebhookBody,
 	w http.ResponseWriter,
@@ -146,23 +149,40 @@ func createOrUpdatePullRequest(
 		writeFlush(w, fmt.Sprintf("Updated pull request for branch \"%s\"\n", desiredPr.Spec.BranchName))
 	}
 
+	return pr, waitForRollout(ctx, c, pods, reviewApp, &desiredPr, w)
+}
+
+// waitForRollout streams the status of the deployments of the pull request until they all run
+// its image, and returns why they don't as soon as the controller or the new pods fail
+func waitForRollout(
+	ctx context.Context,
+	c client.Client,
+	pods podInspector,
+	reviewApp *reviewapps.ReviewAppConfig,
+	pr *reviewapps.PullRequest,
+	w http.ResponseWriter,
+) error {
 	attempts := 0
 	for {
 		finished := true
 
 		select {
 		case <-ctx.Done():
-			return pr, ctx.Err()
+			return ctx.Err()
 		default:
 		}
 
+		if err := controllerError(ctx, c, client.ObjectKeyFromObject(pr)); err != nil {
+			return err
+		}
+
 		for _, deploymentSpec := range reviewApp.Spec.Deployments {
-			deploymentName := utils.GetDeploymentName(reviewApp, &desiredPr, deploymentSpec.Name)
+			deploymentName := utils.GetDeploymentName(reviewApp, pr, deploymentSpec.Name)
 
 			var deployment = appsv1.Deployment{}
 			if err := c.Get(ctx, types.NamespacedName{
 				Name:      deploymentName,
-				Namespace: key.Namespace,
+				Namespace: pr.Namespace,
 			}, &deployment); err != nil {
 				if apierrors.IsNotFound(err) {
 					finished = false
@@ -170,12 +190,12 @@ func createOrUpdatePullRequest(
 					continue
 				}
 
-				return nil, err
+				return err
 			}
 
 			// Until the controller has applied the new image the deployment status
 			// describes the previous rollout
-			if !hasContainerImage(&deployment, deploymentSpec.TargetContainerName, desiredPr.Spec.ImageName) {
+			if !hasContainerImage(&deployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName) {
 				finished = false
 				writeFlush(w, fmt.Sprintf("Waiting for deployment \"%s\" to be updated...\n", deploymentName))
 				continue
@@ -184,19 +204,31 @@ func createOrUpdatePullRequest(
 			status, done, err := utils.GetDeploymentStatus(&deployment)
 
 			if err != nil {
-				return pr, err
+				return err
 			}
+
+			writeFlush(w, status)
 
 			if !done {
 				finished = false
 				log.Info("Deployment in progress: " + status)
-			}
 
-			writeFlush(w, status)
+				failure, err := pods.failure(ctx, &deployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+				if err != nil {
+					// Keep waiting for the rollout, like before the pods could be inspected
+					log.Error(err, "Failed to inspect the pods", "deployment", deploymentName)
+				} else if failure != nil {
+					if failure.logs != "" {
+						writeFlush(w, fmt.Sprintf("Last logs of container %q in pod %s:\n%s\n", failure.container, failure.pod, failure.logs))
+					}
+
+					return fmt.Errorf("deployment %q fails to start: %s", deploymentName, failure.reason)
+				}
+			}
 		}
 
 		if finished {
-			break
+			return nil
 		}
 
 		attempts++
@@ -206,13 +238,11 @@ func createOrUpdatePullRequest(
 		if attempts > 600 {
 			log.Info("Timeout waiting for deployments to be ready")
 
-			return nil, errors.New("timeout waiting for deployments to be ready")
+			return errors.New("timeout waiting for deployments to be ready")
 		}
 
 		time.Sleep(1 * time.Second)
 	}
-
-	return pr, nil
 }
 
 // checkNameConflict returns errNameConflict if the PullRequest or deployment names are used by another
@@ -260,11 +290,38 @@ func setDeployInfo(status *reviewapps.PullRequestStatus, deploy reviewapps.PullR
 // A deployment without the target container never gets its image updated by the
 // controller, so it is considered up to date.
 func hasContainerImage(deployment *appsv1.Deployment, containerName, image string) bool {
-	for _, container := range deployment.Spec.Template.Spec.Containers {
+	return runsImage(deployment.Spec.Template.Spec.Containers, containerName, image)
+}
+
+// runsImage reports whether the target container of a pod spec runs image. Without the target
+// container the controller never updates the image, so any image counts
+func runsImage(containers []corev1.Container, containerName, image string) bool {
+	for _, container := range containers {
 		if container.Name == containerName {
 			return container.Image == image
 		}
 	}
 
 	return true
+}
+
+// reconcileErrorGracePeriod is how long the controller must have failed to reconcile the
+// PullRequest before the deploy fails, as errors like conflicting updates are retried right away
+var reconcileErrorGracePeriod = 10 * time.Second
+
+// controllerError returns the error of the controller when it fails to reconcile the current spec
+// of the PullRequest, like an invalid host template
+func controllerError(ctx context.Context, c client.Client, key types.NamespacedName) error {
+	var pr reviewapps.PullRequest
+	if err := c.Get(ctx, key, &pr); err != nil {
+		return nil
+	}
+
+	condition := meta.FindStatusCondition(pr.Status.Conditions, reviewapps.ConditionReconciled)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != pr.Generation ||
+		time.Since(condition.LastTransitionTime.Time) < reconcileErrorGracePeriod {
+		return nil
+	}
+
+	return fmt.Errorf("the review app can't be deployed: %s", condition.Message)
 }

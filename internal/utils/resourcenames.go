@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -19,7 +20,12 @@ var (
 	reLeading = regexp.MustCompile(`^[^a-z]+`)
 	// Trailing characters that are not alphanumeric (DNS1123 / DNS1035).
 	reTrailing = regexp.MustCompile(`[^a-z0-9]+$`)
+	// A template variable left after rendering a host template.
+	reVariable = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 )
+
+// ErrInvalidHostTemplate is returned when a host template can't generate a valid hostname
+var ErrInvalidHostTemplate = errors.New("invalid host template")
 
 // Normalizes a resource name or label value.
 // Different Kubernetes resources has different name restrictions,
@@ -72,7 +78,7 @@ func RandomID(pr reviewapps.PullRequest) (string, error) {
 func GetHostnameFromTemplate(template string, deploymentName string, pr reviewapps.PullRequest, reviewApp reviewapps.ReviewAppConfig) (string, error) {
 	hasRandomID := strings.Contains(template, "{{.RandomID}}")
 	if !hasRandomID && !strings.Contains(template, "{{.BranchName}}") {
-		return "", fmt.Errorf("template %s does not contain {{.BranchName}} or {{.RandomID}}", template)
+		return "", fmt.Errorf("%w %s: it must contain {{.BranchName}} or {{.RandomID}}", ErrInvalidHostTemplate, template)
 	}
 
 	randomID := ""
@@ -107,18 +113,23 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr reviewap
 
 	s := render(template, branchName)
 
+	// Like a misspelled variable, or one from a newer version of the operator
+	if variable := reVariable.FindString(s); variable != "" {
+		return "", fmt.Errorf("%w %s: unknown variable %s", ErrInvalidHostTemplate, template, variable)
+	}
+
 	// Split template-x.review.example.com into template-x, review.example.com
 	// and ensure that it isn't too long
 	label, domain, _ := strings.Cut(s, ".")
 	label = strings.TrimSuffix(label, ".")
 
 	if domain == "" {
-		return "", fmt.Errorf("no domain in %s", s)
+		return "", fmt.Errorf("%w %s: no domain", ErrInvalidHostTemplate, template)
 	}
 
 	if len(label) > validation.DNS1123LabelMaxLength {
 		if hasRandomID {
-			return "", fmt.Errorf("template %s is too long for a DNS label", template)
+			return "", fmt.Errorf("%w %s: too long for a DNS label", ErrInvalidHostTemplate, template)
 		}
 
 		// Try to cut the long dns label to a valid length
@@ -128,7 +139,7 @@ func GetHostnameFromTemplate(template string, deploymentName string, pr reviewap
 	s = fmt.Sprintf("%s.%s", label, domain)
 
 	if err := validation.IsDNS1123Subdomain(s); err != nil {
-		return "", fmt.Errorf("generated host template '%s' is invalid %s", s, err[0])
+		return "", fmt.Errorf("%w %s: the hostname %s is invalid: %s", ErrInvalidHostTemplate, template, s, err[0])
 	}
 
 	return s, nil

@@ -15,6 +15,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -183,8 +184,16 @@ func main() {
 	}
 
 	if enableDeployWebhook {
+		clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			setupLog.Error(err, "unable to create the kubernetes client")
+			os.Exit(1)
+		}
+
 		deployWebhook := webhooks.WebhookServer{
 			Client:        mgr.GetClient(),
+			PodReader:     mgr.GetAPIReader(),
+			PodLogs:       clientset.CoreV1(),
 			Addr:          ":8080",
 			WebhookSecret: webhookSecret,
 		}

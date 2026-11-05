@@ -14,6 +14,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -64,6 +65,13 @@ type WebhookBody struct {
 type WebhookServer struct {
 	Addr string
 	client.Client
+
+	// PodReader lists pods directly from the API server to find why a rollout fails, so that
+	// the webhook doesn't cache every pod in the namespaces
+	PodReader client.Reader
+
+	// PodLogs reads the logs of crashing containers
+	PodLogs corev1client.PodsGetter
 
 	WebhookSecret string
 }
@@ -227,6 +235,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		pr, err := createOrUpdatePullRequest(
 			r.Context(),
 			wh.Client,
+			podInspector{reader: wh.PodReader, logs: wh.PodLogs},
 			&reviewApp,
 			webhook,
 			w,

@@ -108,7 +108,7 @@ Create this ReviewAppConfig
 > [!NOTE]
 > See the [ReviewAppConfig sample](/config/samples/rac.william.nu_v1alpha1_reviewappconfig.yaml) for a more detailed example.
 >
-> Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}` and `{{.RandomID}}`, and must contain `{{.BranchName}}` or `{{.RandomID}}`
+> Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}` and `{{.RandomID}}`, and must contain `{{.BranchName}}` or `{{.RandomID}}`. Other than the variables, host templates may only contain lowercase letters, digits, `-` and `.`, and `kubectl apply` rejects templates that don't
 
 ### Random hostnames
 
@@ -125,6 +125,12 @@ A long branch name is shortened to keep the random ID in the hostname. Random ho
 The Review App Action deploys the pull request image when a pull request is opened or updated, and deletes the review app when it is closed. Build and push the image before the action runs.
 
 The action runs directly on the runner and needs `bash`, `curl`, `jq` and `openssl`, which GitHub-hosted runners have.
+
+The action waits until the review app runs the new image, and fails with the reason in the job log as soon as:
+
+- the controller can't create or update the review app, like for an invalid host template
+- a new pod keeps crashing, after 3 restarts. The last 20 lines of the container's logs are included
+- a new pod can't start, like when its image can't be pulled or a secret it uses is missing
 
 ```yaml
 name: Review App
@@ -188,6 +194,17 @@ spec:
   # The latest deployed image
   imageName: <user>/<repo>:29df5a41b93906346d693c90adcd8acf266893c3@sha256:...
 ```
+
+The `Reconciled` condition of a PullRequest tells whether the controller could create and update its review app, and why not:
+
+```bash
+$ kubectl get pullrequests --namespace staging
+NAME                     BRANCH          RECONCILED   REASON                AGE
+frontend-feature-login   feature/login   True         Reconciled            3h
+frontend-new-checkout    new-checkout    False        InvalidHostTemplate   2m
+```
+
+Add `-o wide` for the error message.
 
 ## Releasing
 

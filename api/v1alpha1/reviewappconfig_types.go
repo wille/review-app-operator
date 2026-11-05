@@ -38,8 +38,11 @@ type Deployments struct {
 	// +optional
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
-	// HostTemplates must contain {{.BranchName}} or {{.RandomID}}
+	// HostTemplates must contain {{.BranchName}} or {{.RandomID}}, and may only use the
+	// template variables and lowercase hostname characters. Keep the pattern in step with
+	// utils.GetHostnameFromTemplate
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9.-]|\{\{\.(ReviewAppConfig|BranchName|DeploymentName|PullRequestNumber|RandomID)\}\})*\{\{\.(BranchName|RandomID)\}\}([a-z0-9.-]|\{\{\.(ReviewAppConfig|BranchName|DeploymentName|PullRequestNumber|RandomID)\}\})*$`
 	HostTemplates []string `json:"hostTemplates"`
 
 	// generateEmbeddedObjectMeta must be set for this to work

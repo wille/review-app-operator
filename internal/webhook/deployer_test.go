@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -40,9 +41,14 @@ var _ = Describe("Deploy webhook", func() {
 	var (
 		reviewApp *reviewapps.ReviewAppConfig
 		c         client.Client
+
+		// Serves "fake logs" as the logs of every container
+		podLogs *clientsetfake.Clientset
 	)
 
 	BeforeEach(func() {
+		podLogs = clientsetfake.NewClientset()
+
 		scheme := runtime.NewScheme()
 		Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
 		Expect(reviewapps.AddToScheme(scheme)).To(Succeed())
@@ -118,7 +124,7 @@ var _ = Describe("Deploy webhook", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		_, err := createOrUpdatePullRequest(ctx, c, reviewApp, WebhookBody{
+		_, err := createOrUpdatePullRequest(ctx, c, podInspector{reader: c, logs: podLogs.CoreV1()}, reviewApp, WebhookBody{
 			BranchName:        "feature",
 			Image:             image,
 			PullRequestNumber: 42,
@@ -194,7 +200,7 @@ var _ = Describe("Deploy webhook", func() {
 		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 		rec := httptest.NewRecorder()
 
-		WebhookServer{Client: c, WebhookSecret: "secret"}.ServeHTTP(rec, req)
+		WebhookServer{Client: c, PodReader: c, PodLogs: podLogs.CoreV1(), WebhookSecret: "secret"}.ServeHTTP(rec, req)
 
 		return rec
 	}
@@ -309,6 +315,124 @@ var _ = Describe("Deploy webhook", func() {
 
 		It("deletes the review app of its own branch", func() {
 			Expect(serve(http.MethodDelete, branchBody(http.MethodDelete, "feature/login")).Code).To(Equal(http.StatusOK))
+		})
+	})
+
+	Context("when the review app fails to start", func() {
+		// rollingOutDeployment returns the review app deployment for the "feature" branch,
+		// rolling out image with a pod that isn't available
+		rollingOutDeployment := func(image string) *appsv1.Deployment {
+			deployment := rolledOutDeployment(image)
+			replicas := int32(1)
+			deployment.Spec.Replicas = &replicas
+			deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "feature"}}
+			deployment.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1}
+			return deployment
+		}
+
+		pod := func(image string, status corev1.ContainerStatus) *corev1.Pod {
+			status.Name = "web"
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "app-web-feature-1", Namespace: "default", Labels: map[string]string{"app": "feature"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "web", Image: image}}},
+				Status:     corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{status}},
+			}
+		}
+
+		crashLooping := func(restarts int32) corev1.ContainerStatus {
+			return corev1.ContainerStatus{
+				RestartCount:         restarts,
+				State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
+			}
+		}
+
+		lastLine := func(rec *httptest.ResponseRecorder) string {
+			lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+			return lines[len(lines)-1]
+		}
+
+		It("fails right away when a new pod keeps crashing", func() {
+			Expect(c.Create(context.Background(), rollingOutDeployment("nginx:2"))).To(Succeed())
+			Expect(c.Create(context.Background(), pod("nginx:2", crashLooping(3)))).To(Succeed())
+
+			start := time.Now()
+			rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+			Expect(time.Since(start)).To(BeNumerically("<", 2*time.Second))
+			Expect(rec.Body.String()).To(ContainSubstring("Last logs of container \"web\" in pod app-web-feature-1:\nfake logs\n"))
+			Expect(lastLine(rec)).To(Equal(`Error deploying: deployment "app-web-feature" fails to start: ` +
+				`container "web" in pod app-web-feature-1 is crashing, it restarted 3 times and last exited with code 1 (Error)`))
+		})
+
+		It("gives a crashing pod a chance to start", func() {
+			Expect(c.Create(context.Background(), rollingOutDeployment("nginx:2"))).To(Succeed())
+			Expect(c.Create(context.Background(), pod("nginx:2", crashLooping(1)))).To(Succeed())
+
+			Expect(deploy(1500*time.Millisecond, "nginx:2")).To(MatchError(context.DeadlineExceeded))
+		})
+
+		It("ignores the crashing pods of the previous image", func() {
+			Expect(c.Create(context.Background(), rollingOutDeployment("nginx:2"))).To(Succeed())
+			Expect(c.Create(context.Background(), pod("nginx:1", crashLooping(5)))).To(Succeed())
+
+			Expect(deploy(1500*time.Millisecond, "nginx:2")).To(MatchError(context.DeadlineExceeded))
+		})
+
+		It("fails right away when the image can't be pulled", func() {
+			Expect(c.Create(context.Background(), rollingOutDeployment("nginx:2"))).To(Succeed())
+			Expect(c.Create(context.Background(), pod("nginx:2", corev1.ContainerStatus{
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: `Back-off pulling image "nginx:2"`}},
+			}))).To(Succeed())
+
+			rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+			Expect(lastLine(rec)).To(Equal(`Error deploying: deployment "app-web-feature" fails to start: ` +
+				`container "web" in pod app-web-feature-1 can't start: ImagePullBackOff: Back-off pulling image "nginx:2"`))
+		})
+
+		// failedPullRequest creates the PullRequest of the "feature" branch, which the controller
+		// failed to reconcile at failedAt
+		failedPullRequest := func(failedAt time.Time, observedGenerationOffset int64) {
+			pr := &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
+				Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature", ImageName: "nginx:2"},
+			}
+			Expect(c.Create(context.Background(), pr)).To(Succeed())
+
+			pr.Status = reviewapps.PullRequestStatus{
+				Deployments: map[string]*reviewapps.DeploymentStatus{},
+				Conditions: []metav1.Condition{{
+					Type:               reviewapps.ConditionReconciled,
+					Status:             metav1.ConditionFalse,
+					Reason:             "InvalidHostTemplate",
+					Message:            "invalid host template web-{{.RandomId}}.example.com: unknown variable {{.RandomId}}",
+					ObservedGeneration: pr.Generation + observedGenerationOffset,
+					LastTransitionTime: metav1.NewTime(failedAt),
+				}},
+			}
+			Expect(c.Status().Update(context.Background(), pr)).To(Succeed())
+		}
+
+		It("fails right away when the controller can't deploy the review app", func() {
+			failedPullRequest(time.Now().Add(-time.Minute), 0)
+
+			rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+			Expect(lastLine(rec)).To(Equal("Error deploying: the review app can't be deployed: " +
+				"invalid host template web-{{.RandomId}}.example.com: unknown variable {{.RandomId}}"))
+		})
+
+		It("gives the controller a chance to retry an error", func() {
+			failedPullRequest(time.Now(), 0)
+
+			Expect(deploy(1500*time.Millisecond, "nginx:2")).To(MatchError(context.DeadlineExceeded))
+		})
+
+		It("ignores a controller error for a previous spec of the PullRequest", func() {
+			failedPullRequest(time.Now().Add(-time.Minute), 1)
+
+			Expect(deploy(1500*time.Millisecond, "nginx:2")).To(MatchError(context.DeadlineExceeded))
 		})
 	})
 })

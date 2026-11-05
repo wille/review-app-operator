@@ -27,7 +27,17 @@ type PullRequestStatus struct {
 	PullRequestNumber int `json:"pullRequestNumber,omitempty"`
 
 	Deployments map[string]*DeploymentStatus `json:"activeDeployments"`
+
+	// Conditions report whether the controller could create and update the review app
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+// ConditionReconciled is the condition type that reports whether the controller could
+// create and update the deployments of the review app, and why not
+const ConditionReconciled = "Reconciled"
 
 type DeploymentStatus struct {
 	// +optional
@@ -43,6 +53,11 @@ type DeploymentStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=pr
+// +kubebuilder:printcolumn:name="Branch",type=string,JSONPath=`.spec.branchName`
+// +kubebuilder:printcolumn:name="Reconciled",type=string,JSONPath=`.status.conditions[?(@.type=="Reconciled")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Reconciled")].reason`
+// +kubebuilder:printcolumn:name="Message",type=string,priority=1,JSONPath=`.status.conditions[?(@.type=="Reconciled")].message`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PullRequest is the Schema for the pullrequests API
 type PullRequest struct {
