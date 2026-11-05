@@ -25,73 +25,103 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
 
 var _ = Describe("ReviewAppConfig Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-reviewapp"
-		const namespace = "default"
+	const namespace = "default"
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: namespace,
-		}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind ReviewAppConfig")
-			reviewApp := &reviewapps.ReviewAppConfig{}
-			err := k8sClient.Get(ctx, typeNamespacedName, reviewApp)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &reviewapps.ReviewAppConfig{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: namespace,
-					},
-					Spec: reviewapps.ReviewAppConfigSpec{
-						Deployments: []reviewapps.Deployments{
-							{
-								Name:                "web",
-								TargetContainerName: "app",
-								TargetContainerPort: 8080,
-								HostTemplates:       []string{"{{.BranchName}}.test.example.com"},
-								Template: corev1.PodTemplateSpec{
-									Spec: corev1.PodSpec{
-										Containers: []corev1.Container{
-											{
-												Name:  "app",
-												Image: "nginx:latest",
-											},
-										},
+	reviewAppNamed := func(name string, finalizers ...string) *reviewapps.ReviewAppConfig {
+		return &reviewapps.ReviewAppConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       name,
+				Namespace:  namespace,
+				Finalizers: finalizers,
+			},
+			Spec: reviewapps.ReviewAppConfigSpec{
+				Deployments: []reviewapps.Deployments{
+					{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates:       []string{"{{.BranchName}}.test.example.com"},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "app",
+										Image: "nginx:latest",
 									},
 								},
 							},
 						},
 					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
+				},
+			},
+		}
+	}
+
+	// create creates the ReviewAppConfig and deletes it after the spec
+	create := func(reviewApp *reviewapps.ReviewAppConfig) types.NamespacedName {
+		Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+		key := client.ObjectKeyFromObject(reviewApp)
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+			}))).To(Succeed())
+			Eventually(func() bool {
+				return errors.IsNotFound(k8sClient.Get(ctx, key, &reviewapps.ReviewAppConfig{}))
+			}, 10*time.Second, 250*time.Millisecond).Should(BeTrue())
 		})
 
-		AfterEach(func() {
-			resource := &reviewapps.ReviewAppConfig{}
-			if err := k8sClient.Get(ctx, typeNamespacedName, resource); err == nil {
-				By("Cleanup the specific resource instance ReviewAppConfig")
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-				Eventually(func() bool {
-					return errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &reviewapps.ReviewAppConfig{}))
-				}, 10*time.Second, 250*time.Millisecond).Should(BeTrue())
-			}
-		})
+		return key
+	}
 
-		It("should add a finalizer to the ReviewAppConfig", func() {
-			Eventually(func(g Gomega) {
-				reviewApp := &reviewapps.ReviewAppConfig{}
-				g.Expect(k8sClient.Get(ctx, typeNamespacedName, reviewApp)).To(Succeed())
-				g.Expect(controllerutil.ContainsFinalizer(reviewApp, "reviewapp.william.nu/finalizer")).To(BeTrue())
-			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
-		})
+	It("does not add a finalizer, which would block deleting it while the operator is not running", func() {
+		key := create(reviewAppNamed("without-finalizer"))
+
+		// The client reads from the cache of the manager, which sees the ReviewAppConfig shortly after
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &reviewapps.ReviewAppConfig{})
+		}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+
+		Consistently(func(g Gomega) {
+			reviewApp := &reviewapps.ReviewAppConfig{}
+			g.Expect(k8sClient.Get(ctx, key, reviewApp)).To(Succeed())
+			g.Expect(reviewApp.Finalizers).To(BeEmpty())
+		}, 2*time.Second, 250*time.Millisecond).Should(Succeed())
+	})
+
+	It("removes the finalizer of earlier versions", func() {
+		key := create(reviewAppNamed("with-finalizer", legacyFinalizer))
+
+		Eventually(func(g Gomega) {
+			reviewApp := &reviewapps.ReviewAppConfig{}
+			g.Expect(k8sClient.Get(ctx, key, reviewApp)).To(Succeed())
+			g.Expect(reviewApp.Finalizers).To(BeEmpty())
+		}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+	})
+
+	It("keeps the finalizers of others", func() {
+		key := create(reviewAppNamed("other-finalizers", legacyFinalizer, "example.com/other"))
+
+		Eventually(func(g Gomega) {
+			reviewApp := &reviewapps.ReviewAppConfig{}
+			g.Expect(k8sClient.Get(ctx, key, reviewApp)).To(Succeed())
+			g.Expect(reviewApp.Finalizers).To(ConsistOf("example.com/other"))
+		}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+
+		// Let the ReviewAppConfig be deleted after the spec
+		Eventually(func() error {
+			reviewApp := &reviewapps.ReviewAppConfig{}
+			if err := k8sClient.Get(ctx, key, reviewApp); err != nil {
+				return err
+			}
+			reviewApp.Finalizers = nil
+			return k8sClient.Update(ctx, reviewApp)
+		}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 	})
 })

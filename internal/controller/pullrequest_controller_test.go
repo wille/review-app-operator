@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 	"github.com/wille/review-app-operator/internal/utils"
@@ -82,12 +81,6 @@ var _ = Describe("PullRequest Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
-
-			Eventually(func(g Gomega) {
-				ra := &reviewapps.ReviewAppConfig{}
-				g.Expect(k8sClient.Get(ctx, reviewAppNN, ra)).To(Succeed())
-				g.Expect(controllerutil.ContainsFinalizer(ra, "reviewapp.william.nu/finalizer")).To(BeTrue())
-			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 
 			By("creating the PullRequest")
 			pr := &reviewapps.PullRequest{}

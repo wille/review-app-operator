@@ -4039,34 +4039,6 @@ spec:
             - deployments
             type: object
           status:
-            properties:
-              active:
-                items:
-                  properties:
-                    apiVersion:
-                      type: string
-                    fieldPath:
-                      type: string
-                    kind:
-                      type: string
-                    name:
-                      type: string
-                    namespace:
-                      type: string
-                    resourceVersion:
-                      type: string
-                    uid:
-                      type: string
-                  type: object
-                  x-kubernetes-map-type: atomic
-                type: array
-              activeApps:
-                items:
-                  type: string
-                type: array
-              lastUpdate:
-                format: date-time
-                type: string
             type: object
         type: object
     served: true

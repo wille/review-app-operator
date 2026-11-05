@@ -79,19 +79,6 @@ type ReviewAppConfigSpec struct {
 
 // ReviewAppConfigStatus defines the observed state of ReviewAppConfig
 type ReviewAppConfigStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// A list of pointers to currently running jobs.
-	// +optional
-	Active []corev1.ObjectReference `json:"active,omitempty"`
-
-	// Information when was the last time the job was successfully scheduled.
-	// +optional
-	LastUpdate *metav1.Time `json:"lastUpdate,omitempty"`
-
-	// +optional
-	ActiveApps []string `json:"activeApps"`
 }
 
 // +kubebuilder:object:root=true

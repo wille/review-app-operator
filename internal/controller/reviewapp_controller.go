@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 
-	// keda "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,6 +27,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// legacyFinalizer was added to ReviewAppConfigs by earlier versions without anything to clean up,
+// and blocked deleting them while the operator was not running
+const legacyFinalizer = "reviewapp.william.nu/finalizer"
 
 // ReviewAppConfigReconciler reconciles a ReviewAppConfig object
 type ReviewAppConfigReconciler struct {
@@ -39,81 +42,30 @@ type ReviewAppConfigReconciler struct {
 // +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewappconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=reviewapps.william.nu,resources=reviewappconfigs/finalizers,verbs=update
 
+// Reconcile removes the finalizer that earlier versions added to ReviewAppConfigs
 func (r *ReviewAppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
 	reviewApp := &reviewapps.ReviewAppConfig{}
 	if err := r.Get(ctx, req.NamespacedName, reviewApp); err != nil {
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	finalizerName := "reviewapp.william.nu/finalizer"
-
-	// examine DeletionTimestamp to determine if object is under deletion
-	if reviewApp.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then lets add the finalizer and update the object. This is equivalent
-		// to registering our finalizer.
-		if !controllerutil.ContainsFinalizer(reviewApp, finalizerName) {
-			log.Info("Adding Finalizer for the ReviewAppConfig", "reviewapp", req.NamespacedName)
-			controllerutil.AddFinalizer(reviewApp, finalizerName)
-			if err := r.Update(ctx, reviewApp); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		// The object is being deleted
-		if controllerutil.ContainsFinalizer(reviewApp, finalizerName) {
-			// our finalizer is present, so lets handle any external dependency
-			if err := r.deleteExternalResources(ctx, reviewApp); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried.
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Removed review app", "name", req.Name)
-
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(reviewApp, finalizerName)
-			if err := r.Update(ctx, reviewApp); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		// Stop reconciliation as the item is being deleted
+	if !controllerutil.ContainsFinalizer(reviewApp, legacyFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
+	// The optimistic lock keeps the finalizers that others add meanwhile
+	patch := client.MergeFromWithOptions(reviewApp.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	controllerutil.RemoveFinalizer(reviewApp, legacyFinalizer)
+	if err := r.Patch(ctx, reviewApp, patch); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	log.FromContext(ctx).Info("Removed the finalizer of earlier versions")
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *ReviewAppConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// The .spec.reviewAppRef index used to look up PullRequests belonging to a
-	// ReviewAppConfig is registered by the PullRequest controller.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&reviewapps.ReviewAppConfig{}).
-		Owns(&reviewapps.PullRequest{}).
 		Complete(r)
-}
-
-func (r *ReviewAppConfigReconciler) deleteExternalResources(ctx context.Context, cronJob *reviewapps.ReviewAppConfig) error {
-	//
-
-	// log := log.FromContext(ctx)
-	// // delete any external resources associated with the cronJob
-	// //
-	// // Ensure that delete implementation is idempotent and safe to invoke
-	// // multiple times for same object.
-
-	// childJobs := appsv1.DeploymentList{}
-	// if err := r.List(ctx, &childJobs, client.MatchingFields{".metadata.controller": req.Name}); err != nil {
-	// 	log.Error(err, "unable to list child Jobs")
-	// 	return err
-	// }
-
-	return nil
 }
