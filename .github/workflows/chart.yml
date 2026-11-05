@@ -1,0 +1,56 @@
+name: Chart
+
+# Publishes the Helm chart when the version in chart/Chart.yaml is not published yet,
+# independently of the controller releases. The chart's appVersion is the controller
+# release it deploys by default.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - chart/**
+      - .github/workflows/chart.yml
+
+concurrency:
+  group: chart
+
+jobs:
+  publish:
+    name: Publish Helm chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Tag the published commit
+      packages: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Publish the chart if its version is new
+        env:
+          ACTOR: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chart_field() { helm show chart chart 2>/dev/null | awk -v key="$1:" '$1 == key { print $2 }'; }
+          version=$(chart_field version)
+          app_version=$(chart_field appVersion)
+
+          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+
+          # Published versions are never overwritten
+          if out=$(helm show chart oci://ghcr.io/wille/charts/review-app-operator --version "$version" 2>&1); then
+            echo "::notice::Chart $version is already published, bump the version in chart/Chart.yaml to publish a new chart"
+            exit 0
+          elif ! grep -q "not found" <<<"$out"; then
+            echo "$out"
+            exit 1
+          fi
+
+          # The chart deploys the controller image of its appVersion by default
+          docker buildx imagetools inspect "ghcr.io/wille/review-app-operator:$app_version" >/dev/null
+
+          helm lint chart --set webhook.ingress.host=example.com --set 'forwarder.ingress.hosts[0]=*.example.com'
+          helm package chart
+          helm push "review-app-operator-$version.tgz" oci://ghcr.io/wille/charts
+
+          git tag "chart-$version"
+          git push origin "chart-$version"

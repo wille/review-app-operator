@@ -5,5 +5,7 @@ description: Review App Operator Helm chart
 sources:
   - https://github.com/wille/review-app-operator
 type: application
-version: 0.0.1
-appVersion: v0.0.1
+# The chart is published when this version lands on master and is not published yet
+version: 0.1.0
+# The controller release the chart deploys by default
+appVersion: v0.1.0

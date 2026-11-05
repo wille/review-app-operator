@@ -55,11 +55,17 @@ forwarder:
 ## Install with Helm
 
 ```bash
-$ helm repo add review-app-operator https://wille.github.io/review-app-operator
-$ helm install review-app-operator review-app-operator/review-app-operator \
+$ helm install review-app-operator oci://ghcr.io/wille/charts/review-app-operator \
     --namespace review-app-operator-system --create-namespace \
     -f values.yaml
 ```
+
+> [!IMPORTANT]
+> Helm does not upgrade CRDs. Apply the CRDs of the new chart version before upgrading:
+>
+> ```bash
+> $ helm show crds oci://ghcr.io/wille/charts/review-app-operator --version <version> | kubectl apply --server-side -f -
+> ```
 
 ## Creating a Review App
 
@@ -170,3 +176,23 @@ spec:
   # The latest deployed image
   imageName: <user>/<repo>:29df5a41b93906346d693c90adcd8acf266893c3@sha256:...
 ```
+
+## Releasing
+
+The controller and the Helm chart are released separately.
+
+### Controller
+
+Publish a GitHub release tagged `vX.Y.Z` to build and push the controller image `ghcr.io/wille/review-app-operator:vX.Y.Z`. The tag is also the release of the [Review App Action](#review-app-action).
+
+```bash
+$ gh release create vX.Y.Z --target master --generate-notes
+```
+
+Every push to `master` also publishes the image `ghcr.io/wille/review-app-operator:master`.
+
+### Helm chart
+
+Bump `version` in [`chart/Chart.yaml`](/chart/Chart.yaml) and push it to `master`. The chart is published to `oci://ghcr.io/wille/charts/review-app-operator` and the commit is tagged `chart-X.Y.Z`. Published versions are never overwritten.
+
+To make the chart deploy a newer controller by default, set `appVersion` to its release tag. The chart is only published if that controller image exists.
