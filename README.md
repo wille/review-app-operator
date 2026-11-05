@@ -12,7 +12,7 @@ The Review App Operator consists of four components:
 
 - **Manager**: The controller responsible for creating and managing the deployments and keeping them in sync
 - **Forwarder**: The proxy responsible for routing traffic to the correct deployment and starting deployments on demand. WebSockets and streamed responses like server-sent events pass through. While a review app starts, browsers loading a page get a page that reloads until it has started, and other requests get `503 Service Unavailable` with `Retry-After`
-- **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set
+- **Downscaler**: Watches pull request deployments and downscales if no traffic is received for `scaleDownAfter`. Deployments are not downscaled if `scaleDownAfter` is not set. Review apps that have neither been deployed nor received traffic for `deleteAfter` are deleted, like when the webhook couldn't delete them as their pull request closed. The next deploy creates them again. Review apps are not deleted if `deleteAfter` is not set
 - **Deployment Webhook**: Receives pull request open, sync and close events from Github Actions with the [Review App Action](#review-app-action)
 
 ## Installation
@@ -82,6 +82,8 @@ metadata:
   name: my-review-app
   namespace: staging
 spec:
+  scaleDownAfter: 1h # Scale down review apps that receive no traffic for an hour
+  deleteAfter: 168h # Delete review apps that are neither deployed nor visited for a week
   deployments:
     - name: test
       targetContainerName: test # Update this container when a Pull request is opened or updated

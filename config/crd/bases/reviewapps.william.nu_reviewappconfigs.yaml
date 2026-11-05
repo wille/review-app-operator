@@ -30,6 +30,8 @@ spec:
             properties:
               connectionTimeout:
                 type: string
+              deleteAfter:
+                type: string
               deployments:
                 items:
                   properties:

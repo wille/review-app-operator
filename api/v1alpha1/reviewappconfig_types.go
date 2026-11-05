@@ -67,6 +67,12 @@ type ReviewAppConfigSpec struct {
 	// +optional
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
+	// DeleteAfter deletes the review app of a pull request that has neither been deployed nor
+	// received traffic for this long, like when the webhook could not delete it as the pull
+	// request closed. The next deploy creates it again. Review apps are not deleted if it is not set
+	// +optional
+	DeleteAfter metav1.Duration `json:"deleteAfter,omitempty"`
+
 	// +kubebuilder:validation:MinItems=1
 	Deployments []Deployments `json:"deployments"`
 }

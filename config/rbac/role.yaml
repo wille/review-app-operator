@@ -44,8 +44,10 @@ rules:
   - reviewapps.william.nu
   resources:
   - pullrequests
+  - reviewappconfigs
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -67,15 +69,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - reviewapps.william.nu
-  resources:
-  - reviewappconfigs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
