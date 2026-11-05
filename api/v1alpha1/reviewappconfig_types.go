@@ -106,7 +106,3 @@ type ReviewAppConfigList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ReviewAppConfig `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&ReviewAppConfig{}, &ReviewAppConfigList{})
-}

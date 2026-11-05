@@ -61,7 +61,3 @@ type PullRequestList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []PullRequest `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&PullRequest{}, &PullRequestList{})
-}
