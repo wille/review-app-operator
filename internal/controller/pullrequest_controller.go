@@ -163,8 +163,14 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		leaseNames = append(leaseNames, utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name))
 	}
 
-	// Record the error on the PullRequest, where the webhook reports it to CI
-	setReconciledCondition(pr, reconcileErr)
+	// Record the error on the PullRequest, where the webhook reports it to CI. Overrides of
+	// deployments that the ReviewAppConfig doesn't have don't stop the review app from running,
+	// as retrying doesn't help, but fail its deploys
+	conditionErr := reconcileErr
+	if conditionErr == nil {
+		conditionErr = unknownOverrides(&reviewApp, pr)
+	}
+	setReconciledCondition(pr, conditionErr)
 
 	if !equality.Semantic.DeepEqual(existingPr.Status, pr.Status) {
 		if err := r.Status().Patch(ctx, pr, patch); err != nil {
@@ -205,6 +211,7 @@ const (
 	reasonReviewAppConfigNotFound = "ReviewAppConfigNotFound"
 	reasonInvalidHostTemplate     = "InvalidHostTemplate"
 	reasonNameConflict            = "NameConflict"
+	reasonUnknownDeployment       = "UnknownDeployment"
 	reasonReconcileFailed         = "ReconcileFailed"
 )
 
@@ -236,6 +243,8 @@ func setReconciledCondition(pr *reviewapps.PullRequest, err error) {
 			condition.Reason = reasonInvalidHostTemplate
 		case errors.Is(err, errNotControlled):
 			condition.Reason = reasonNameConflict
+		case errors.Is(err, errUnknownDeployment):
+			condition.Reason = reasonUnknownDeployment
 		default:
 			condition.Reason = reasonReconcileFailed
 		}
@@ -284,6 +293,12 @@ func (r *PullRequestReconciler) reconcileDeployment(
 	}
 	maps.Copy(podTemplate.Labels, objectMeta.Labels)
 
+	// The overrides of the PullRequest, like environment variables that point the review app at
+	// the review app of another repository
+	overrides := deploymentOverrides(pr, deploymentSpec.Name)
+	applyOverrides(podTemplate, deploymentSpec.TargetContainerName, overrides)
+	overridesHash := overridesHash(overrides)
+
 	desiredDeployment := &appsv1.Deployment{
 		ObjectMeta: *objectMeta.DeepCopy(),
 		Spec: appsv1.DeploymentSpec{
@@ -297,6 +312,7 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			ProgressDeadlineSeconds: deploymentSpec.ProgressDeadlineSeconds,
 		},
 	}
+	setOverridesAnnotation(desiredDeployment, overridesHash)
 
 	// Get the hostnames for this deployment
 	hostnames, err := utils.GetHostnamesFromTemplate(deploymentSpec.HostTemplates, deploymentSpec.Name, *pr, *reviewApp)
@@ -362,17 +378,30 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			updatedImage = updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
 		}
 
-		if updatedImage {
+		// Changing the overrides of the PullRequest restarts its review app right away
+		changedOverrides := runningDeployment.Annotations[overridesAnnotation] != overridesHash
+
+		synced := updatedImage || changedOverrides
+		if synced {
 			// Changes to the deployment spec in the ReviewAppConfig roll out with the next image
-			// pushed to each pull request, which restarts the pods anyway, instead of restarting
-			// every review app at once when the ReviewAppConfig changes
+			// pushed to each pull request, or the next change to its overrides, which restart the
+			// pods anyway, instead of restarting every review app at once when the ReviewAppConfig
+			// changes
 			runningDeployment.Spec.Template = *desiredDeployment.Spec.Template.DeepCopy()
 			runningDeployment.Spec.Strategy = desiredDeployment.Spec.Strategy
 			runningDeployment.Spec.MinReadySeconds = desiredDeployment.Spec.MinReadySeconds
 			runningDeployment.Spec.ProgressDeadlineSeconds = desiredDeployment.Spec.ProgressDeadlineSeconds
-			updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+			setOverridesAnnotation(&runningDeployment, overridesHash)
+			if pr.Spec.ImageName != "" {
+				updateContainerImage(&runningDeployment, deploymentSpec.TargetContainerName, pr.Spec.ImageName)
+			}
+		}
 
+		if updatedImage {
 			log.Info("Updated image", "deploymentName", deploymentName, "image", pr.Spec.ImageName)
+		}
+		if changedOverrides {
+			log.Info("Updated overrides", "deploymentName", deploymentName)
 		}
 
 		if *runningDeployment.Spec.Replicas > 0 && !running {
@@ -396,7 +425,7 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			replicas = 0
 		}
 
-		if updatedImage ||
+		if synced ||
 			*runningDeployment.Spec.Replicas != replicas ||
 			!equality.Semantic.DeepDerivative(desiredDeployment.Labels, runningDeployment.Labels) {
 

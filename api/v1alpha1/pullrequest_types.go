@@ -11,6 +11,38 @@ type PullRequestSpec struct {
 
 	// The parent ReviewAppConfig
 	ReviewAppConfigRef string `json:"reviewAppRef,omitempty"`
+
+	// Deployments overrides the ReviewAppConfig for deployments of this review app, like to point
+	// it at the review app of another repository. Deploys keep them, as the webhook only changes
+	// the image
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Deployments []DeploymentOverrides `json:"deployments,omitempty"`
+}
+
+// DeploymentOverrides overrides the ReviewAppConfig for one deployment of a review app
+type DeploymentOverrides struct {
+	// Name is the name of the deployment in the ReviewAppConfig
+	Name string `json:"name"`
+
+	// Env sets environment variables of the target container, replacing those of the same name
+	// in the ReviewAppConfig. Changing them restarts the review app
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []EnvVar `json:"env,omitempty"`
+}
+
+// EnvVar is an environment variable with a value. Values from Secrets and ConfigMaps can only
+// be set in the ReviewAppConfig, so that whoever can edit PullRequests can't read them through
+// a review app
+type EnvVar struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// +optional
+	Value string `json:"value,omitempty"`
 }
 
 // PullRequestStatus defines the observed state of PullRequest

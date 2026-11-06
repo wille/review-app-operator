@@ -207,6 +207,38 @@ frontend-new-checkout    new-checkout    False        InvalidHostTemplate   2m
 
 Add `-o wide` for the error message.
 
+### Overriding environment variables
+
+A PullRequest can override environment variables of its review app, like to point a frontend review app at the review app of a backend pull request. Overrides are set for a deployment of the ReviewAppConfig and apply to its target container, replacing the variables of the same name:
+
+```yaml
+spec:
+  deployments:
+    - name: test # The deployment in the ReviewAppConfig
+      env:
+        - name: API_URL
+          value: https://api-my-branch.review-apps.example.com
+```
+
+```bash
+$ kubectl patch pullrequest my-review-app-my-branch --namespace staging --type merge \
+    -p '{"spec":{"deployments":[{"name":"test","env":[{"name":"API_URL","value":"https://api-my-branch.review-apps.example.com"}]}]}}'
+```
+
+- Changing the overrides restarts the review app right away, with any changes to the ReviewAppConfig it doesn't run yet. Removing an override restores the value of the ReviewAppConfig.
+- Deploys keep the overrides, which are deleted with the review app when its pull request is closed.
+- Overrides only take values. Values from Secrets and ConfigMaps can only be set in the ReviewAppConfig, so that whoever can edit PullRequests can't read them through a review app.
+- Overriding a deployment that the ReviewAppConfig doesn't have sets the `Reconciled` condition to `False` with the reason `UnknownDeployment`, and fails the next deploy.
+
+The PullRequest of a branch is named after the ReviewAppConfig and the branch, which is shortened and stripped of characters that names can't have. To find it by the branch name:
+
+```bash
+$ kubectl get pullrequests --namespace staging -o json | jq -r --arg branch my/branch \
+    '.items[] | select(.spec.reviewAppRef == "my-review-app" and .spec.branchName == $branch) | .metadata.name'
+```
+
+Changing PullRequests needs the `patch` permission on `pullrequests`, which the chart's `pullrequest-editor-role` ClusterRole grants.
+
 ## Releasing
 
 The controller and the Helm chart are released separately.

@@ -184,6 +184,27 @@ var _ = Describe("Deploy webhook", func() {
 		Expect(pr.Status.Deployments["web"].Hostnames).To(ConsistOf("feature.example.com"))
 	})
 
+	It("keeps the overrides of the deployments when deploying a new image", func() {
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
+
+		overrides := []reviewapps.DeploymentOverrides{{
+			Name: "web",
+			Env:  []reviewapps.EnvVar{{Name: "API_URL", Value: "https://api-feature.example.com"}},
+		}}
+		Expect(c.Create(context.Background(), &reviewapps.PullRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
+			Spec: reviewapps.PullRequestSpec{
+				ReviewAppConfigRef: "app", BranchName: "feature", ImageName: "nginx:1", Deployments: overrides,
+			},
+		})).To(Succeed())
+
+		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
+
+		pr := getPullRequest()
+		Expect(pr.Spec.ImageName).To(Equal("nginx:2"))
+		Expect(pr.Spec.Deployments).To(Equal(overrides))
+	})
+
 	// serve sends a webhook request with body, signed with the webhook secret
 	serve := func(method string, body map[string]any) *httptest.ResponseRecorder {
 		data, err := json.Marshal(body)

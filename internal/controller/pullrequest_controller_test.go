@@ -478,6 +478,173 @@ var _ = Describe("PullRequest Controller", func() {
 		})
 	})
 
+	Context("When a PullRequest overrides a deployment", func() {
+		const namespace = "default"
+
+		var reviewApp *reviewapps.ReviewAppConfig
+		var pr *reviewapps.PullRequest
+		var deployNN types.NamespacedName
+
+		apiURL := corev1.EnvVar{Name: "API_URL", Value: "https://api.example.com"}
+		logLevel := corev1.EnvVar{Name: "LOG_LEVEL", Value: "info"}
+
+		// overrides returns overrides of the web deployment with environment variables
+		overrides := func(env ...reviewapps.EnvVar) []reviewapps.DeploymentOverrides {
+			return []reviewapps.DeploymentOverrides{{Name: "web", Env: env}}
+		}
+
+		BeforeEach(func() {
+			reviewApp = &reviewapps.ReviewAppConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "overridden", Namespace: namespace},
+				Spec: reviewapps.ReviewAppConfigSpec{
+					Deployments: []reviewapps.Deployments{{
+						Name:                "web",
+						TargetContainerName: "app",
+						TargetContainerPort: 8080,
+						HostTemplates:       []string{"{{.BranchName}}.overridden.example.com"},
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{Name: "app", Image: "nginx:latest", Env: []corev1.EnvVar{apiURL, logLevel}},
+									{Name: "sidecar", Image: "redis:8", Env: []corev1.EnvVar{apiURL}},
+								},
+							},
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+
+			pr = &reviewapps.PullRequest{
+				ObjectMeta: metav1.ObjectMeta{Name: "overridden-feature", Namespace: namespace},
+				Spec: reviewapps.PullRequestSpec{
+					ReviewAppConfigRef: "overridden",
+					BranchName:         "feature",
+					ImageName:          "nginx:test",
+					Deployments: overrides(
+						reviewapps.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+						reviewapps.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+					),
+				},
+			}
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			deployNN = types.NamespacedName{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+		})
+
+		AfterEach(func() {
+			// envtest runs no garbage collector to delete what the PullRequest owns
+			objectMeta := metav1.ObjectMeta{Name: deployNN.Name, Namespace: namespace}
+			for _, obj := range []client.Object{pr, reviewApp, &appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+			}
+		})
+
+		// updatePullRequest changes the PullRequest, retrying when the controller updated it first
+		updatePullRequest := func(change func(*reviewapps.PullRequest)) {
+			Eventually(func() error {
+				var latest reviewapps.PullRequest
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &latest); err != nil {
+					return err
+				}
+				change(&latest)
+				return k8sClient.Update(ctx, &latest)
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		}
+
+		// expectEnv waits for the target container of the deployment to have the environment variables
+		expectEnv := func(env ...corev1.EnvVar) {
+			Eventually(func(g Gomega) {
+				deploy := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.Spec.Template.Spec.Containers[0].Env).To(Equal(env))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		}
+
+		It("sets the environment variables of the overrides in the target container", func() {
+			expectEnv(
+				corev1.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+				logLevel,
+				corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+			)
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+			Expect(deploy.Spec.Template.Spec.Containers[1].Env).To(Equal([]corev1.EnvVar{apiURL}))
+			Expect(deploy.Annotations).To(HaveKey("reviewapps.william.nu/overrides-hash"))
+		})
+
+		It("keeps the overrides when a new image is pushed", func() {
+			expectEnv(
+				corev1.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+				logLevel,
+				corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+			)
+
+			updatePullRequest(func(pr *reviewapps.PullRequest) { pr.Spec.ImageName = "nginx:test2" })
+
+			Eventually(func(g Gomega) {
+				deploy := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+				g.Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:test2"))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+			expectEnv(
+				corev1.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+				logLevel,
+				corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+			)
+		})
+
+		It("applies changes to the overrides right away, and reverts the removed ones", func() {
+			expectEnv(
+				corev1.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+				logLevel,
+				corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+			)
+
+			updatePullRequest(func(pr *reviewapps.PullRequest) {
+				pr.Spec.Deployments = overrides(reviewapps.EnvVar{Name: "API_URL", Value: "https://api-other.example.com"})
+			})
+			expectEnv(corev1.EnvVar{Name: "API_URL", Value: "https://api-other.example.com"}, logLevel)
+
+			updatePullRequest(func(pr *reviewapps.PullRequest) { pr.Spec.Deployments = nil })
+			expectEnv(apiURL, logLevel)
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deployNN, deploy)).To(Succeed())
+			Expect(deploy.Annotations).NotTo(HaveKey("reviewapps.william.nu/overrides-hash"))
+			Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:test"))
+		})
+
+		It("reports overrides of a deployment that the ReviewAppConfig doesn't have", func() {
+			updatePullRequest(func(pr *reviewapps.PullRequest) {
+				pr.Spec.Deployments = append(pr.Spec.Deployments, reviewapps.DeploymentOverrides{
+					Name: "wbe",
+					Env:  []reviewapps.EnvVar{{Name: "API_URL", Value: "https://api-other.example.com"}},
+				})
+			})
+
+			Eventually(func(g Gomega) {
+				var got reviewapps.PullRequest
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &got)).To(Succeed())
+
+				condition := meta.FindStatusCondition(got.Status.Conditions, reviewapps.ConditionReconciled)
+				g.Expect(condition).NotTo(BeNil())
+				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(condition.Reason).To(Equal("UnknownDeployment"))
+				g.Expect(condition.Message).To(ContainSubstring(`"wbe"`))
+				g.Expect(condition.ObservedGeneration).To(Equal(got.Generation))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+
+			// The deployments that the ReviewAppConfig has keep running with their overrides
+			expectEnv(
+				corev1.EnvVar{Name: "API_URL", Value: "https://api-feature.example.com"},
+				logLevel,
+				corev1.EnvVar{Name: "FEATURE_FLAG", Value: "on"},
+			)
+		})
+	})
+
 	Context("When two PullRequests have the same truncated deployment name", func() {
 		const namespace = "default"
 

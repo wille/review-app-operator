@@ -108,8 +108,11 @@ func createOrUpdatePullRequest(
 		// forwarder's host index depends on.
 		specPatch := client.MergeFrom(existingPr.DeepCopy())
 
+		// Keep the overrides of the deployments, which are set on the PullRequest by hand
 		existingPr.Labels = desiredPr.Labels
-		existingPr.Spec = desiredPr.Spec
+		existingPr.Spec.ImageName = desiredPr.Spec.ImageName
+		existingPr.Spec.BranchName = desiredPr.Spec.BranchName
+		existingPr.Spec.ReviewAppConfigRef = desiredPr.Spec.ReviewAppConfigRef
 
 		// Update the PullRequest if it is found
 		if err := c.Patch(ctx, &existingPr, specPatch); err != nil {

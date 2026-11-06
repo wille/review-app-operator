@@ -47,6 +47,33 @@ spec:
             properties:
               branchName:
                 type: string
+              deployments:
+                items:
+                  properties:
+                    env:
+                      items:
+                        properties:
+                          name:
+                            minLength: 1
+                            type: string
+                          value:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               imageName:
                 type: string
               reviewAppRef:
