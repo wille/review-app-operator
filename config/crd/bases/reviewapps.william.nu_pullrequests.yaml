@@ -26,6 +26,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Reconciled")].reason
       name: Reason
       type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Reconciled")].message
       name: Message
       priority: 1
@@ -144,6 +147,8 @@ spec:
               pullRequestUrl:
                 type: string
               repositoryUrl:
+                type: string
+              url:
                 type: string
             required:
             - activeDeployments

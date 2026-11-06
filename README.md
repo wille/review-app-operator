@@ -148,6 +148,9 @@ concurrency:
 jobs:
   review-app:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write # To add the check with the URLs of the review app
     steps:
       # Build and push user/app:${{ github.event.pull_request.head.sha }} unless the pull request is closed
 
@@ -162,7 +165,16 @@ jobs:
           image: user/app:${{ github.event.pull_request.head.sha }}
 
       # The URL of the review app is available as ${{ steps.deploy.outputs.review_app_url }}
+      # The URLs of every deployment as ${{ fromJSON(steps.deploy.outputs.review_app_urls).test[0] }}
 ```
+
+The URL of the review app is the first host template of its first deployment, which is a good link for the GitHub environment of the deploy job. The action also lists every URL of every deployment:
+
+- in a check named `Review app <name>` that it adds to the pushed commit, which shows the URLs in its details on the pull request. When the pull request is closed, the action adds a neutral check that says that the review app was deleted
+- in the summary of the job
+- in the `review_app_urls` output, a JSON object of the deployment names to their URLs
+
+The check needs the `checks: write` permission of the `github_token` input, which is the token of the workflow by default. Without it, like for pull requests from forks, the action warns that it couldn't add the check and still deploys. Set `check: false` to not add it.
 
 The webhook secret is created by the Helm chart, unless `webhook.createSecret` is disabled to create it yourself:
 
@@ -200,9 +212,9 @@ The `Reconciled` condition of a PullRequest tells whether the controller could c
 
 ```bash
 $ kubectl get pullrequests --namespace staging
-NAME                     BRANCH          RECONCILED   REASON                AGE
-frontend-feature-login   feature/login   True         Reconciled            3h
-frontend-new-checkout    new-checkout    False        InvalidHostTemplate   2m
+NAME                     BRANCH          RECONCILED   REASON                URL                                             AGE
+frontend-feature-login   feature/login   True         Reconciled            https://feature-login.review-apps.example.com   3h
+frontend-new-checkout    new-checkout    False        InvalidHostTemplate                                                   2m
 ```
 
 Add `-o wide` for the error message.

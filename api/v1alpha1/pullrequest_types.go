@@ -58,6 +58,11 @@ type PullRequestStatus struct {
 	// +optional
 	PullRequestNumber int `json:"pullRequestNumber,omitempty"`
 
+	// URL is the URL of the review app, from the first host template of its first deployment. The
+	// URLs of every deployment are in their hostnames
+	// +optional
+	URL string `json:"url,omitempty"`
+
 	Deployments map[string]*DeploymentStatus `json:"activeDeployments"`
 
 	// Conditions report whether the controller could create and update the review app
@@ -92,6 +97,7 @@ type DeploymentStatus struct {
 // +kubebuilder:printcolumn:name="Branch",type=string,JSONPath=`.spec.branchName`
 // +kubebuilder:printcolumn:name="Reconciled",type=string,JSONPath=`.status.conditions[?(@.type=="Reconciled")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Reconciled")].reason`
+// +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.status.url`
 // +kubebuilder:printcolumn:name="Message",type=string,priority=1,JSONPath=`.status.conditions[?(@.type=="Reconciled")].message`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

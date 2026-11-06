@@ -251,29 +251,26 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Pick the first deployment in the .spec.deployments list
-		primaryDeploymentSpec := reviewApp.Spec.Deployments[0]
-
-		// Use the first host template in the .spec.deployments.*.hostTemplates list
-		template := primaryDeploymentSpec.HostTemplates[0]
-		deploymentUrl, err := utils.GetHostnameFromTemplate(template, primaryDeploymentSpec.Name, *pr, reviewApp)
+		urls, err := utils.GetURLs(reviewApp, *pr)
 		if err != nil {
 			log.Error(err, "Error creating deployment url from template")
 			http.Error(w, "Error creating deployment url from template", http.StatusInternalServerError)
 			return
 		}
 
-		deploymentUrl = "https://" + deploymentUrl
+		// The URL of the review app is the first URL of the first deployment, which GitHub links
+		// the deployment of the pull request to
+		deploymentUrl := urls[0].URLs[0]
 		log.Info("Successfully deployed", "url", deploymentUrl)
 
-		// Only return the "primary" host URL for now.
-		// If you have multiple hostnames for a deployment, like when a container
-		// is serving multiple websites and you need to rely on the Host header,
-		// the github pull request would be cluttered by one deployment for every host.
-		//
-		// Since the response is streamed to the Github Action so you can follow progress
-		// in real time, we just stream status text and finish with a `Review App URL: <url>`
-		// that is parsed by the action
+		// Since the response is streamed to the Github Action so you can follow progress in real
+		// time, the action parses the URLs from the text. It lists every URL of every deployment
+		// on the pull request, and older actions only read the URL of the review app on the last line
+		for _, deployment := range urls {
+			for _, url := range deployment.URLs {
+				writeFlush(w, fmt.Sprintf("URL of %s: %s\n", deployment.Deployment, url))
+			}
+		}
 		_, _ = w.Write([]byte("Review App URL: " + deploymentUrl))
 		return
 	default:

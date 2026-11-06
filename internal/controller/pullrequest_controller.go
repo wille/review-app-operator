@@ -163,6 +163,15 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		leaseNames = append(leaseNames, utils.GetDeploymentName(&reviewApp, pr, deploymentSpec.Name))
 	}
 
+	// The URL of the review app is the first hostname of its first deployment, like the webhook
+	// reports to CI
+	pr.Status.URL = ""
+	if len(reviewApp.Spec.Deployments) > 0 {
+		if status := pr.Status.Deployments[reviewApp.Spec.Deployments[0].Name]; status != nil && len(status.Hostnames) > 0 {
+			pr.Status.URL = utils.URL(status.Hostnames[0])
+		}
+	}
+
 	// Record the error on the PullRequest, where the webhook reports it to CI. Overrides of
 	// deployments that the ReviewAppConfig doesn't have don't stop the review app from running,
 	// as retrying doesn't help, but fail its deploys

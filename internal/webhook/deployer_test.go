@@ -291,6 +291,30 @@ var _ = Describe("Deploy webhook", func() {
 		Expect(lines[len(lines)-1]).To(Equal("Review App URL: https://feature-" + id + ".example.com"))
 	})
 
+	It("lists every URL of every deployment before the URL of the review app", func() {
+		reviewApp.Spec.Deployments[0].HostTemplates = []string{"{{.BranchName}}.example.com", "mobile-{{.BranchName}}.example.com"}
+		api := reviewApp.Spec.Deployments[0]
+		api.Name = "api"
+		api.HostTemplates = []string{"api-{{.BranchName}}.example.com"}
+		reviewApp.Spec.Deployments = append(reviewApp.Spec.Deployments, api)
+		Expect(c.Update(context.Background(), reviewApp)).To(Succeed())
+
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
+		apiDeployment := rolledOutDeployment("nginx:2")
+		apiDeployment.Name = "app-api-feature"
+		Expect(c.Create(context.Background(), apiDeployment)).To(Succeed())
+
+		rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
+
+		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+		Expect(lines[len(lines)-4:]).To(Equal([]string{
+			"URL of web: https://feature.example.com",
+			"URL of web: https://mobile-feature.example.com",
+			"URL of api: https://api-feature.example.com",
+			"Review App URL: https://feature.example.com",
+		}))
+	})
+
 	It("does not deploy when the deployment name is used by another review app", func() {
 		// Long branch names are truncated to the same deployment name
 		// before they are truncated to the same PullRequest name

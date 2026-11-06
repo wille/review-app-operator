@@ -2,10 +2,13 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
@@ -28,6 +31,12 @@ var _ = Describe("Review App Action", func() {
 		c      client.Client
 		server *httptest.Server
 		dir    string
+
+		// The GitHub API that the action adds checks with
+		github      *httptest.Server
+		checks      []checkRequest
+		checksMutex sync.Mutex
+		checkStatus int
 	)
 
 	prKey := types.NamespacedName{Namespace: "default", Name: "app-feature-login"}
@@ -93,16 +102,45 @@ var _ = Describe("Review App Action", func() {
 		DeferCleanup(server.Close)
 
 		dir = GinkgoT().TempDir()
+
+		checks = nil
+		checkStatus = http.StatusCreated
+		github = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			check := checkRequest{Method: r.Method, Path: r.URL.Path, Authorization: r.Header.Get("Authorization")}
+			Expect(json.NewDecoder(r.Body).Decode(&check.Body)).To(Succeed())
+
+			checksMutex.Lock()
+			defer checksMutex.Unlock()
+			checks = append(checks, check)
+
+			w.WriteHeader(checkStatus)
+			if checkStatus != http.StatusCreated {
+				_, _ = w.Write([]byte(`{"message": "Resource not accessible by integration"}`))
+			}
+		}))
+		DeferCleanup(github.Close)
 	})
 
-	// runAction runs the action for a pull request event like GitHub runs it and returns its outputs
-	runAction := func(action, secret string) (string, error) {
+	// addedChecks returns the checks that the action added
+	addedChecks := func() []checkRequest {
+		checksMutex.Lock()
+		defer checksMutex.Unlock()
+		return checks
+	}
+
+	// runAction runs the action for a pull request event like GitHub runs it and returns its
+	// outputs. env sets more environment variables, like inputs
+	runAction := func(action, secret string, env ...string) (string, error) {
 		event := filepath.Join(dir, "event.json")
 		Expect(os.WriteFile(event, []byte(`{
 			"action": "`+action+`",
 			"number": 7,
-			"repository": {"html_url": "https://github.com/o/r"},
-			"pull_request": {"head": {"ref": "feature/login"}, "html_url": "https://github.com/o/r/pull/7", "merged": false},
+			"repository": {"html_url": "https://github.com/o/r", "full_name": "o/r"},
+			"pull_request": {
+				"head": {"ref": "feature/login", "sha": "abc123"},
+				"html_url": "https://github.com/o/r/pull/7",
+				"merged": false
+			},
 			"sender": {"html_url": "https://github.com/octocat"}
 		}`), 0o600)).To(Succeed())
 
@@ -120,7 +158,12 @@ var _ = Describe("Review App Action", func() {
 			"INPUT_WEBHOOK_URL="+server.URL,
 			"INPUT_WEBHOOK_SECRET="+secret,
 			"INPUT_IMAGE=nginx:2",
+			"INPUT_CHECK=true",
+			"INPUT_GITHUB_TOKEN=token",
+			"GITHUB_API_URL="+github.URL,
+			"GITHUB_STEP_SUMMARY="+filepath.Join(dir, "summary.md"),
 		)
+		cmd.Env = append(cmd.Env, env...)
 		log, err := cmd.CombinedOutput()
 		GinkgoWriter.Printf("%s\n", log)
 
@@ -131,7 +174,8 @@ var _ = Describe("Review App Action", func() {
 	}
 
 	It("deploys and deletes the review app", func() {
-		Expect(runAction("synchronize", "secret")).To(Equal("review_app_url=https://feature-login.example.com\n"))
+		Expect(runAction("synchronize", "secret")).To(Equal("review_app_url=https://feature-login.example.com\n" +
+			`review_app_urls={"web":["https://feature-login.example.com"]}` + "\n"))
 
 		var pr reviewapps.PullRequest
 		Expect(c.Get(context.Background(), prKey, &pr)).To(Succeed())
@@ -147,6 +191,56 @@ var _ = Describe("Review App Action", func() {
 		_, err := runAction("closed", "secret")
 
 		Expect(err).NotTo(HaveOccurred())
+		Expect(addedChecks()).To(BeEmpty())
+	})
+
+	It("adds a check with the URLs of the review app, and marks it deleted when the pull request closes", func() {
+		_, err := runAction("synchronize", "secret")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(addedChecks()).To(HaveLen(1))
+		check := addedChecks()[0]
+		Expect(check.Method).To(Equal(http.MethodPost))
+		Expect(check.Path).To(Equal("/repos/o/r/check-runs"))
+		Expect(check.Authorization).To(Equal("Bearer token"))
+		Expect(check.Body).To(Equal(map[string]any{
+			"name":       "Review app app",
+			"head_sha":   "abc123",
+			"status":     "completed",
+			"conclusion": "success",
+			"output": map[string]any{
+				"title":   "https://feature-login.example.com",
+				"summary": "**web**\n\n- https://feature-login.example.com",
+			},
+		}))
+
+		summary, err := os.ReadFile(filepath.Join(dir, "summary.md"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(summary)).To(Equal("### Review app `app`\n\n**web**\n\n- https://feature-login.example.com\n"))
+
+		_, err = runAction("closed", "secret")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(addedChecks()).To(HaveLen(2))
+		Expect(addedChecks()[1].Body).To(HaveKeyWithValue("conclusion", "neutral"))
+		Expect(addedChecks()[1].Body).To(HaveKeyWithValue("head_sha", "abc123"))
+	})
+
+	It("deploys when the check can't be added", func() {
+		checkStatus = http.StatusForbidden
+
+		outputs, err := runAction("synchronize", "secret")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outputs).To(HavePrefix("review_app_url=https://feature-login.example.com\n"))
+		Expect(addedChecks()).To(HaveLen(1))
+	})
+
+	It("adds no check when it is turned off", func() {
+		_, err := runAction("synchronize", "secret", "INPUT_CHECK=false")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(addedChecks()).To(BeEmpty())
 	})
 
 	It("fails when the webhook rejects the signature", func() {
@@ -156,3 +250,11 @@ var _ = Describe("Review App Action", func() {
 		Expect(outputs).To(BeEmpty())
 	})
 })
+
+// checkRequest is a request of the action to add a check to the pull request
+type checkRequest struct {
+	Method        string
+	Path          string
+	Authorization string
+	Body          map[string]any
+}

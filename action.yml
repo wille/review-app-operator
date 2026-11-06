@@ -23,11 +23,22 @@ inputs:
   image:
     description: The new Docker Image to deploy
     required: false
+  check:
+    description: Whether to add a check with the URLs of the review app to the pull request
+    required: false
+    default: "true"
+  github_token:
+    description: The token to add the check with, which needs the `checks: write` permission
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   review_app_url:
     description: The URL of the review app
     value: ${{ steps.webhook.outputs.review_app_url }}
+  review_app_urls:
+    description: The URLs of every deployment of the review app, as a JSON object of the deployment names to their URLs
+    value: ${{ steps.webhook.outputs.review_app_urls }}
 
 # Runs the script directly on the runner, which needs bash, curl, jq and openssl
 runs:
@@ -42,3 +53,5 @@ runs:
         INPUT_WEBHOOK_URL: ${{ inputs.webhook_url }}
         INPUT_WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
         INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_CHECK: ${{ inputs.check }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}

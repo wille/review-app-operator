@@ -152,6 +152,14 @@ var _ = Describe("PullRequest Controller", func() {
 			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 		})
 
+		It("should record the URL of the review app on the PullRequest status", func() {
+			Eventually(func(g Gomega) {
+				pr := &reviewapps.PullRequest{}
+				g.Expect(k8sClient.Get(ctx, prNN, pr)).To(Succeed())
+				g.Expect(pr.Status.URL).To(Equal("https://feature-test-branch.test.example.com"))
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+
 		It("should set the container image from the PullRequest spec", func() {
 			Eventually(func(g Gomega) {
 				deploy := &appsv1.Deployment{}
