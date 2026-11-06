@@ -56,3 +56,16 @@ spec:
           type: RuntimeDefault
       serviceAccountName: {{ include "chart.fullname" . }}-controller-manager
       terminationGracePeriodSeconds: 30
+      # Spread the replicas over nodes and zones, so that losing one leaves another to take over
+      topologySpreadConstraints:
+      {{- range list "kubernetes.io/hostname" "topology.kubernetes.io/zone" }}
+      - maxSkew: 1
+        topologyKey: {{ . }}
+        whenUnsatisfiable: ScheduleAnyway
+        matchLabelKeys:
+        - pod-template-hash
+        labelSelector:
+          matchLabels:
+            control-plane: controller-manager
+          {{- include "chart.selectorLabels" $ | nindent 12 }}
+      {{- end }}

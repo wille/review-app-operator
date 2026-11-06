@@ -113,7 +113,9 @@ forwarder:
       memory: 32Mi
 
 controllerManager:
-  replicas: 1
+  # One replica leads and the others take over when it stops, so that review apps keep starting
+  # on visits while a node is drained or fails
+  replicas: 2
   resources:
     limits:
       cpu: 500m

@@ -145,18 +145,11 @@ func main() {
 		// Only the controller-manager needs leader election
 		LeaderElection:   enableController && enableLeaderElection,
 		LeaderElectionID: "80807133.reviewapps.william.nu",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
-		Cache: cacheOpts,
+		// A stopping leader, like on a rolling update or a node drain, hands over right away
+		// instead of the other replica waiting for its lease to expire. It is only safe because
+		// the process ends as soon as the manager stops, so keep nothing running after mgr.Start
+		LeaderElectionReleaseOnCancel: true,
+		Cache:                         cacheOpts,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

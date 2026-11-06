@@ -203,7 +203,7 @@ var _ = Describe("Review App Operator", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		for deployment, replicas := range map[string]string{
-			"review-app-operator-controller-manager": "1",
+			"review-app-operator-controller-manager": "2",
 			"review-app-operator-forwarder":          "2",
 			"review-app-operator-webhook":            "2",
 		} {
@@ -240,6 +240,36 @@ var _ = Describe("Review App Operator", Ordered, func() {
 	It("scales the review app down when it is no longer visited", func() {
 		// After scaleDownAfter has passed since the last visit
 		Eventually(replicas, 3*time.Minute, 5*time.Second).Should(Equal("0"))
+	})
+
+	It("keeps starting review apps when the leading controller stops", func() {
+		// The controller replica that holds the leader election Lease, whose holder is
+		// <pod name>_<random ID>
+		leader := func() (string, error) {
+			holder, err := kubectl("get", "lease", "80807133.reviewapps.william.nu", "-n", namespace,
+				"-o", "jsonpath={.spec.holderIdentity}")
+			pod, _, _ := strings.Cut(holder, "_")
+			return pod, err
+		}
+
+		stopped, err := leader()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stopped).To(HavePrefix("review-app-operator-controller-manager-"))
+
+		_, err = kubectl("delete", "pod", stopped, "-n", namespace, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		start := time.Now()
+
+		// The stopping leader hands over right away, instead of the other replica waiting
+		// 15 seconds for its Lease to expire
+		Eventually(leader, 30*time.Second, 500*time.Millisecond).Should(And(
+			HavePrefix("review-app-operator-controller-manager-"), Not(Equal(stopped))))
+		_, _ = fmt.Fprintf(GinkgoWriter, "the other controller replica took over after %s\n", time.Since(start))
+		Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))
+
+		// The new leader starts the review app that was scaled down
+		Eventually(visit, 5*time.Minute, 5*time.Second).Should(Equal("200"))
+		Expect(replicas()).To(Equal("1"))
 	})
 
 	Context("when the Review App Action deploys a pull request through the webhook", Ordered, func() {
