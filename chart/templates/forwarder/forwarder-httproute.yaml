@@ -1,0 +1,29 @@
+{{- if .Values.forwarder.httpRoute.enabled }}
+{{- if not .Values.forwarder.httpRoute.parentRefs }}
+{{- fail "forwarder.httpRoute.parentRefs must name the Gateways to attach the HTTPRoute to" }}
+{{- end }}
+# Routes the requests of every review app to the forwarder, which picks the review app by its host
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "chart.fullname" . }}-forwarder
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+  {{- with .Values.forwarder.httpRoute.annotations }}
+  annotations:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+  {{- toYaml .Values.forwarder.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+  {{- include "chart.forwarderHosts" . | nindent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "chart.fullname" . }}-forwarder
+          port: 6969
+{{- end }}

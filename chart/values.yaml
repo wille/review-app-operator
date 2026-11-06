@@ -25,7 +25,13 @@ webhook:
   # Disable it to create the secret yourself when the chart is rendered with `helm template`,
   # like by Argo CD, where the existing secret can't be looked up and would get a new value on every render
   createSecret: true
+
+  # The host that the Review App Action sends deploys to, like review-app-webhooks.example.com,
+  # which the Ingress and the HTTPRoute route to the webhook. Earlier charts set it in ingress.host
+  host: ""
+
   ingress:
+    enabled: true
     ingressClassName: ""
     annotations: {}
     # Enable cert-manager
@@ -33,9 +39,15 @@ webhook:
     # tls: true
     tls: false
 
-    # The host for the webhook
-    # review-app-webhooks.example.com
-    host: ""
+  # An HTTPRoute of the Gateway API, instead of or next to the Ingress
+  httpRoute:
+    enabled: false
+    # The Gateways to attach the HTTPRoute to, whose listeners terminate TLS
+    # - name: gateway
+    #   namespace: gateway-system
+    #   sectionName: https
+    parentRefs: []
+    annotations: {}
 
   resources:
     limits:
@@ -50,16 +62,29 @@ forwarder:
 
   # How long a stopping forwarder waits for the requests in flight to finish
   terminationGracePeriodSeconds: 30
+
+  # The hosts of the review apps, which the Ingress and the HTTPRoute route to the forwarder. They
+  # MUST BE wildcards, like "*.review-apps.example.com", because one Ingress or HTTPRoute routes
+  # the requests of every review app. Use them in the hostTemplates of the ReviewAppConfigs.
+  # Earlier charts set them in ingress.hosts
+  hosts: []
+
   ingress:
+    enabled: true
     ingressClassName: ""
     annotations: {}
     # cert-manager.io/cluster-issuer: letsencrypt
     tls: false
-    hosts:
-      # The forwarder hosts MUST BE a wildcard DNS entry because only one ingress
-      # is used to route requests to the forwarder.
-      # - "*.review-apps.example.com"
-      - ""
+
+  # An HTTPRoute of the Gateway API, instead of or next to the Ingress
+  httpRoute:
+    enabled: false
+    # The Gateways to attach the HTTPRoute to, whose listeners terminate TLS for the hosts
+    # - name: gateway
+    #   namespace: gateway-system
+    #   sectionName: https
+    parentRefs: []
+    annotations: {}
   resources:
     limits:
       cpu: 500m

@@ -60,3 +60,21 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+The host of the webhook, which earlier charts set in webhook.ingress.host
+*/}}
+{{- define "chart.webhookHost" -}}
+{{- required "webhook.host must be set" (.Values.webhook.host | default .Values.webhook.ingress.host) }}
+{{- end }}
+
+{{/*
+The hosts of the review apps as a YAML list, which earlier charts set in forwarder.ingress.hosts
+*/}}
+{{- define "chart.forwarderHosts" -}}
+{{- $hosts := compact (.Values.forwarder.hosts | default .Values.forwarder.ingress.hosts | default (list)) }}
+{{- if not $hosts }}
+{{- fail "forwarder.hosts must be set" }}
+{{- end }}
+{{- toYaml $hosts }}
+{{- end }}

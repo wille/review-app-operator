@@ -20,7 +20,7 @@ The Review App Operator consists of three components:
 
 - Access to a Kubernetes v1.30+ cluster.
 - Familiarity with Helm charts.
-- An Ingress controller like [ingress-nginx](https://github.com/kubernetes/ingress-nginx) with [cert-manager](https://cert-manager.io).
+- An Ingress controller like [ingress-nginx](https://github.com/kubernetes/ingress-nginx) with [cert-manager](https://cert-manager.io), or a [Gateway API](https://gateway-api.sigs.k8s.io) Gateway.
 
 ## Configuration `values.yaml`
 
@@ -33,23 +33,62 @@ webhook:
   secretKeyRef:
     name: webhook-secret
     key: webhook-secret
+  host: review-app-webhooks.example.com
   ingress:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt # Use cert-manager to issue a certificate for the webhook Ingress
     tls: true # Enable TLS for the ingress
-    host: review-app-webhooks.example.com
 forwarder:
+  hosts:
+    - "*.review-apps.example.com"
   ingress:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
-    hosts:
-      - "*.review-apps.example.com"
+    tls: true
 ```
 
 > [!IMPORTANT]
 >
-> - The `forwarder.ingress.hosts` must be wildcard hostnames as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewAppConfig`
-> - The `webhook.ingress.host` is the host used for the [Review App Action](#review-app-action) webhook
+> - The `forwarder.hosts` must be wildcard hostnames as only one Ingress is used to route traffic to the forwarder. You need to use this hostname suffix in `hostTemplates` in your `ReviewAppConfig`
+> - The `webhook.host` is the host used for the [Review App Action](#review-app-action) webhook
+> - Earlier charts set them in `webhook.ingress.host` and `forwarder.ingress.hosts`, which still work
+
+### Gateway API
+
+To route the hosts with HTTPRoutes of a [Gateway API](https://gateway-api.sigs.k8s.io) Gateway instead of Ingresses:
+
+```yaml
+webhook:
+  host: review-app-webhooks.example.com
+  ingress:
+    enabled: false
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: gateway
+        namespace: gateway-system
+forwarder:
+  hosts:
+    - "*.review-apps.example.com"
+  ingress:
+    enabled: false
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: gateway
+        namespace: gateway-system
+```
+
+The listeners of the Gateway terminate TLS for the hosts. The HTTPRoutes are named `<release>-webhook` and `<release>-forwarder`, like the Ingresses, to attach policies of the Gateway to.
+
+To have the chart take over HTTPRoutes of those names that were created without Helm, label and annotate them for the release before upgrading:
+
+```bash
+$ kubectl label httproute review-app-operator-webhook review-app-operator-forwarder --namespace review-app-operator-system \
+    app.kubernetes.io/managed-by=Helm
+$ kubectl annotate httproute review-app-operator-webhook review-app-operator-forwarder --namespace review-app-operator-system \
+    meta.helm.sh/release-name=review-app-operator meta.helm.sh/release-namespace=review-app-operator-system
+```
 
 ## Install with Helm
 

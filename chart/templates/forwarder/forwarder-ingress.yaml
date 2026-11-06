@@ -1,3 +1,5 @@
+{{- if .Values.forwarder.ingress.enabled }}
+{{- $hosts := include "chart.forwarderHosts" . | fromYamlArray }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -10,12 +12,12 @@ spec:
   ingressClassName: {{ .Values.forwarder.ingress.ingressClassName }}
   {{- if .Values.forwarder.ingress.tls }}
   tls:
-  - hosts: {{ toYaml .Values.forwarder.ingress.hosts | nindent 4 }}
+  - hosts: {{ toYaml $hosts | nindent 4 }}
     secretName: {{ include "chart.fullname" . }}-forwarder-tls
   {{- end }}
   rules:
-  {{- range .Values.forwarder.ingress.hosts }}
-  - host: {{ required "host must not be empty" . | toYaml }}
+  {{- range $hosts }}
+  - host: {{ . | toYaml }}
     http:
       paths:
       - backend:
@@ -26,3 +28,4 @@ spec:
         path: /
         pathType: Prefix
   {{- end }}
+{{- end }}

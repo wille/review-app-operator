@@ -1,0 +1,29 @@
+{{- if .Values.webhook.httpRoute.enabled }}
+{{- if not .Values.webhook.httpRoute.parentRefs }}
+{{- fail "webhook.httpRoute.parentRefs must name the Gateways to attach the HTTPRoute to" }}
+{{- end }}
+# Routes the deploys of the Review App Action to the webhook
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "chart.fullname" . }}-webhook
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+  {{- with .Values.webhook.httpRoute.annotations }}
+  annotations:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+  {{- toYaml .Values.webhook.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    - '{{ include "chart.webhookHost" . }}'
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "chart.fullname" . }}-webhook
+          port: 8080
+{{- end }}
