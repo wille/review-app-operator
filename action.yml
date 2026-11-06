@@ -18,7 +18,7 @@ inputs:
     description: The target webhook URL
     required: true
   webhook_secret:
-    description: The webhook secret. Without it, the action deploys with the GitHub Actions ID token of the workflow, which needs the `id-token: write` permission and the repository in the `repositories` of the ReviewAppConfig
+    description: "The webhook secret. Without it, the action deploys with the GitHub Actions ID token of the workflow, which needs the `id-token: write` permission and the repository in the `repositories` of the ReviewAppConfig"
     required: false
   oidc_audience:
     description: The audience to request the GitHub Actions ID token for, which is the `webhook.oidc.audience` of the chart
@@ -32,7 +32,7 @@ inputs:
     required: false
     default: "true"
   github_token:
-    description: The token to add the check with, which needs the `checks: write` permission
+    description: "The token to add the check with, which needs the `checks: write` permission"
     required: false
     default: ${{ github.token }}
 
