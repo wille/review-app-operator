@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -74,7 +75,13 @@ type WebhookServer struct {
 	// PodLogs reads the logs of crashing containers
 	PodLogs corev1client.PodsGetter
 
+	// WebhookSecret signs the deploys of the action. Deploys can't authenticate with it if it is empty
 	WebhookSecret string
+
+	// IDTokens verifies the GitHub Actions ID tokens that deploys can authenticate with instead
+	// of the webhook secret, for the repositories that ReviewAppConfigs allow. Deploys can't
+	// authenticate with ID tokens if it is nil
+	IDTokens *IDTokenVerifier
 
 	// Serving reports whether the webhook accepts requests, for its readiness probe
 	Serving *utils.Serving
@@ -127,6 +134,32 @@ func validateReplay(webhook WebhookBody, method string, now time.Time) error {
 	return nil
 }
 
+// authenticate returns the claims of the GitHub Actions ID token that the request is authorized
+// with, or nil for a request that is signed with the webhook secret
+func (wh WebhookServer) authenticate(body []byte, r *http.Request) (*githubClaims, error) {
+	if rawToken, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		if wh.IDTokens == nil {
+			return nil, errors.New("deploys can't authenticate with ID tokens, as the webhook has no ID token issuer")
+		}
+
+		claims, err := wh.IDTokens.verify(r.Context(), rawToken)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ID token: %w", err)
+		}
+		return &claims, nil
+	}
+
+	if wh.WebhookSecret == "" {
+		return nil, errors.New("deploys can't authenticate with the webhook secret, only with GitHub Actions ID tokens")
+	}
+
+	if err := wh.validateWebhook(body, r); err != nil {
+		// Don't tell why the signature is invalid
+		return nil, errors.New("invalid signature")
+	}
+	return nil, nil
+}
+
 func (wh WebhookServer) validateWebhook(body []byte, r *http.Request) error {
 	signature := r.Header.Get("x-hub-signature-256")
 
@@ -158,8 +191,10 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := wh.validateWebhook(body, r); err != nil {
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+	claims, err := wh.authenticate(body, r)
+	if err != nil {
+		log.Error(err, "Unauthenticated webhook")
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -192,6 +227,15 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Error(err, "Error getting review app")
 		http.Error(w, "Error getting review app: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// An ID token only allows deploys of the pull requests of the repositories of the ReviewAppConfig
+	if claims != nil {
+		if err := authorizeIDToken(&reviewApp, *claims, webhook); err != nil {
+			log.Error(err, "Forbidden webhook", "repository", claims.Repository)
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 	}
 
 	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)

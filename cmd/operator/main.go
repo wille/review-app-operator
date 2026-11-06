@@ -66,6 +66,12 @@ func main() {
 	var enableHTTP2 bool
 	flag.BoolVar(&enableForwarder, "forwarder", false, "Enable the forwarding proxy")
 	flag.BoolVar(&enableDeployWebhook, "webhook", false, "Enable the deployment webhook")
+	var oidcIssuer, oidcAudience string
+	flag.StringVar(&oidcIssuer, "oidc-issuer", webhooks.GitHubActionsIssuer,
+		"The issuer of the GitHub Actions ID tokens that deploys can authenticate with, for the repositories "+
+			"that ReviewAppConfigs allow. Empty only accepts deploys signed with the webhook secret")
+	flag.StringVar(&oidcAudience, "oidc-audience", "review-app-operator",
+		"The audience of the GitHub Actions ID tokens, which the action requests them for")
 	flag.BoolVar(&enableController, "controller", false, "Enable the controller webhook")
 
 	cacheOpts := cache.Options{
@@ -207,10 +213,16 @@ func main() {
 		}
 	}
 
+	// Deploys authenticate with the webhook secret, or with GitHub Actions ID tokens
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
-	if enableDeployWebhook && webhookSecret == "" {
-		setupLog.Error(err, "env WEBHOOK_SECRET not set")
+	if enableDeployWebhook && webhookSecret == "" && oidcIssuer == "" {
+		setupLog.Error(nil, "set env WEBHOOK_SECRET or --oidc-issuer for deploys to authenticate with")
 		os.Exit(1)
+	}
+
+	var idTokens *webhooks.IDTokenVerifier
+	if oidcIssuer != "" {
+		idTokens = &webhooks.IDTokenVerifier{Issuer: oidcIssuer, Audience: oidcAudience}
 	}
 
 	if enableDeployWebhook {
@@ -226,6 +238,7 @@ func main() {
 			PodLogs:         clientset.CoreV1(),
 			Addr:            ":8080",
 			WebhookSecret:   webhookSecret,
+			IDTokens:        idTokens,
 			Serving:         webhookServing,
 			ShutdownTimeout: gracefulShutdownTimeout,
 		}

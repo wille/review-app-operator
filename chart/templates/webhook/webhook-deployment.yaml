@@ -24,16 +24,22 @@ spec:
         - --health-probe-bind-address=:8081
         # Finish the requests in flight within the grace period, after the preStop sleep
         - --graceful-shutdown-timeout={{ sub .Values.webhook.terminationGracePeriodSeconds 10 }}s
+        - --oidc-issuer={{ .Values.webhook.oidc.issuer }}
+        - --oidc-audience={{ .Values.webhook.oidc.audience }}
         command:
         - /manager
         env:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}
+        {{- if .Values.webhook.acceptSecret }}
         - name: WEBHOOK_SECRET
           valueFrom:
             secretKeyRef:
               name: {{ .Values.webhook.secretKeyRef.name }}
               key: {{ .Values.webhook.secretKeyRef.key }}
+        {{- else if not .Values.webhook.oidc.issuer }}
+        {{- fail "webhook.oidc.issuer must be set when webhook.acceptSecret is off, for deploys to authenticate with" }}
+        {{- end }}
         image: {{ .Values.image }}:{{ .Values.tag | default .Chart.AppVersion }}
         lifecycle:
           # Keep serving until the ingress no longer sends requests to the stopping pod

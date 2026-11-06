@@ -11,7 +11,6 @@ trap 'rm -f "$response" "$check_response"' EXIT
 
 [[ "$GITHUB_EVENT_NAME" != "pull_request" ]] && echo "Only 'pull_request' workflows are supported" && exit 1
 [[ -z "$GITHUB_EVENT_PATH" ]] && echo "Missing GITHUB_EVENT_PATH" && exit 1
-[[ -z "$INPUT_WEBHOOK_SECRET" ]] && echo "Missing INPUT_WEBHOOK_SECRET" && exit 1
 [[ -z "$INPUT_WEBHOOK_URL" ]] && echo "Missing INPUT_WEBHOOK_URL" && exit 1
 [[ -z "$INPUT_REVIEW_APP_NAME" ]] && echo "Missing INPUT_REVIEW_APP_NAME" && exit 1
 
@@ -132,16 +131,33 @@ webhook_data=$(jq \
     }' "$GITHUB_EVENT_PATH"
 ) || { echo "Failed to create the webhook payload"; exit 1; }
 
-WEBHOOK_SIGNATURE_256=$(echo -n "$webhook_data" | \
-    openssl dgst -sha256 -hmac "$INPUT_WEBHOOK_SECRET" -r | \
-    cut -d ' ' -f 1
-) || { echo "Failed to sign the webhook payload"; exit 1; }
+# Deploys authenticate with the webhook secret, or with the GitHub Actions ID token of the workflow
+if [ -n "$INPUT_WEBHOOK_SECRET" ]; then
+    WEBHOOK_SIGNATURE_256=$(echo -n "$webhook_data" | \
+        openssl dgst -sha256 -hmac "$INPUT_WEBHOOK_SECRET" -r | \
+        cut -d ' ' -f 1
+    ) || { echo "Failed to sign the webhook payload"; exit 1; }
+    auth_header="X-Hub-Signature-256: sha256=$WEBHOOK_SIGNATURE_256"
+else
+    if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] || [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+        echo "Set webhook_secret, or give the job the id-token: write permission to deploy with a GitHub Actions ID token"
+        exit 1
+    fi
+
+    audience=$(jq -rn --arg audience "${INPUT_OIDC_AUDIENCE:-review-app-operator}" '$audience | @uri')
+    id_token=$(curl --silent --show-error --fail \
+        -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+        "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience" | jq -r '.value // empty')
+    [ -z "$id_token" ] && { echo "Failed to get a GitHub Actions ID token"; exit 1; }
+    echo "::add-mask::$id_token"
+    auth_header="Authorization: Bearer $id_token"
+fi
 
 # Streams the response to stdout and saves it so we can parse it
 curl --silent --show-error --no-buffer --fail-with-body \
     -H "Content-Type: application/json" \
     -H "User-Agent: review-app-action/$VERSION" \
-    -H "X-Hub-Signature-256: sha256=$WEBHOOK_SIGNATURE_256" \
+    -H "$auth_header" \
     -X "$method" \
     --data "$webhook_data" "$INPUT_WEBHOOK_URL/v1" \
     2>&1 | tee "$response"

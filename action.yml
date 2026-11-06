@@ -18,8 +18,12 @@ inputs:
     description: The target webhook URL
     required: true
   webhook_secret:
-    description: The webhook secret
-    required: true
+    description: The webhook secret. Without it, the action deploys with the GitHub Actions ID token of the workflow, which needs the `id-token: write` permission and the repository in the `repositories` of the ReviewAppConfig
+    required: false
+  oidc_audience:
+    description: The audience to request the GitHub Actions ID token for, which is the `webhook.oidc.audience` of the chart
+    required: false
+    default: review-app-operator
   image:
     description: The new Docker Image to deploy
     required: false
@@ -52,6 +56,7 @@ runs:
         INPUT_REVIEW_APP_NAMESPACE: ${{ inputs.review_app_namespace }}
         INPUT_WEBHOOK_URL: ${{ inputs.webhook_url }}
         INPUT_WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
+        INPUT_OIDC_AUDIENCE: ${{ inputs.oidc_audience }}
         INPUT_IMAGE: ${{ inputs.image }}
         INPUT_CHECK: ${{ inputs.check }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}

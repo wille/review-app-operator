@@ -102,6 +102,15 @@ var _ = Describe("ReviewAppConfig validation", func() {
 		}, "spec.deployments[0].replicas"),
 	)
 
+	It("rejects repositories that aren't like octo-org/octo-repo", func() {
+		err := k8sClient.Create(ctx, reviewApp(func(r *reviewapps.ReviewAppConfig) {
+			r.Spec.Repositories = []string{"octo-org/app", "https://github.com/octo-org/app"}
+		}))
+
+		Expect(errors.IsInvalid(err)).To(BeTrue(), "%v", err)
+		Expect(err).To(MatchError(ContainSubstring("spec.repositories[1]")))
+	})
+
 	It("accepts a single deployment without a name", func() {
 		Expect(k8sClient.Create(ctx, reviewApp(func(r *reviewapps.ReviewAppConfig) {
 			r.Spec.Deployments = r.Spec.Deployments[:1]

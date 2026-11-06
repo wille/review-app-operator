@@ -100,6 +100,14 @@ type ReviewAppConfigSpec struct {
 	// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$`
 	DeleteAfter metav1.Duration `json:"deleteAfter,omitempty"`
 
+	// Repositories are the GitHub repositories, like octo-org/octo-repo, whose pull request
+	// workflows can deploy and delete these review apps with a GitHub Actions ID token, without
+	// the webhook secret
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:Pattern=`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`
+	Repositories []string `json:"repositories,omitempty"`
+
 	// Deployments are the deployments of each review app. Their names must be different, as they
 	// are part of the names of the Deployments
 	// +kubebuilder:validation:MinItems=1

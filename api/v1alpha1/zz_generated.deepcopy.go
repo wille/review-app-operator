@@ -278,6 +278,11 @@ func (in *ReviewAppConfigSpec) DeepCopyInto(out *ReviewAppConfigSpec) {
 	out.ConnectionTimeout = in.ConnectionTimeout
 	out.ScaleDownAfter = in.ScaleDownAfter
 	out.DeleteAfter = in.DeleteAfter
+	if in.Repositories != nil {
+		in, out := &in.Repositories, &out.Repositories
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Deployments != nil {
 		in, out := &in.Deployments, &out.Deployments
 		*out = make([]Deployments, len(*in))

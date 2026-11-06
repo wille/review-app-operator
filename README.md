@@ -224,11 +224,48 @@ The URL of the review app is the first host template of its first deployment, wh
 
 The check needs the `checks: write` permission of the `github_token` input, which is the token of the workflow by default. Without it, like for pull requests from forks, the action warns that it couldn't add the check and still deploys. Set `check: false` to not add it.
 
+### Authentication
+
+The action authenticates deploys with the webhook secret, or, without `webhook_secret`, with the GitHub Actions ID token of the workflow.
+
 The webhook secret is created by the Helm chart, unless `webhook.createSecret` is disabled to create it yourself:
 
 ```bash
 $ kubectl get secret webhook-secret --namespace review-app-operator-system -o jsonpath='{.data.webhook-secret}' | base64 -d
 ```
+
+Anyone with the webhook secret can deploy and delete every review app. An ID token only deploys and deletes the review apps of the pull requests of its own repository, of the ReviewAppConfigs that allow the repository in `repositories`, and needs no secret:
+
+```yaml
+apiVersion: reviewapps.william.nu/v1alpha1
+kind: ReviewAppConfig
+metadata:
+  name: my-review-app
+spec:
+  repositories:
+    - octo-org/my-app
+```
+
+```yaml
+jobs:
+  review-app:
+    permissions:
+      contents: read
+      checks: write
+      id-token: write # To deploy with the ID token of the workflow
+    steps:
+      - uses: wille/review-app-operator@master
+        with:
+          review_app_name: my-review-app
+          review_app_namespace: staging
+          webhook_url: https://review-app-webhooks.example.com
+          image: user/app:${{ github.event.pull_request.head.sha }}
+```
+
+- The webhook verifies the ID tokens with the keys of GitHub Actions, which it fetches when the first deploy with an ID token arrives. Set `webhook.oidc.issuer` in the chart for a GitHub Enterprise, or empty to only accept the webhook secret.
+- The tokens are requested for the audience `review-app-operator`, which the `oidc_audience` input of the action and `webhook.oidc.audience` of the chart change.
+- Only `pull_request` workflows can deploy, for the branch and the pull request of their token.
+- Once every workflow deploys with ID tokens, set `webhook.acceptSecret: false` in the chart, so that the webhook secret can't deploy anymore and isn't created.
 
 > [!NOTE]
 > The action and the operator should be updated together, older actions are rejected by newer operators

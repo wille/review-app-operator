@@ -32,6 +32,9 @@ var _ = Describe("Review App Action", func() {
 		server *httptest.Server
 		dir    string
 
+		// Issues the ID tokens of the workflow
+		issuer *fakeIssuer
+
 		// The GitHub API that the action adds checks with
 		github      *httptest.Server
 		checks      []checkRequest
@@ -55,6 +58,7 @@ var _ = Describe("Review App Action", func() {
 		reviewApp := &reviewapps.ReviewAppConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
 			Spec: reviewapps.ReviewAppConfigSpec{
+				Repositories: []string{"o/r"},
 				Deployments: []reviewapps.Deployments{{
 					Name:                "web",
 					TargetContainerName: "web",
@@ -98,7 +102,12 @@ var _ = Describe("Review App Action", func() {
 			WithStatusSubresource(&reviewapps.PullRequest{}).
 			Build()
 
-		server = httptest.NewServer(WebhookServer{Client: c, WebhookSecret: "secret"})
+		issuer = newFakeIssuer()
+		server = httptest.NewServer(WebhookServer{
+			Client:        c,
+			WebhookSecret: "secret",
+			IDTokens:      &IDTokenVerifier{Issuer: issuer.URL, Audience: "review-app-operator"},
+		})
 		DeferCleanup(server.Close)
 
 		dir = GinkgoT().TempDir()
@@ -241,6 +250,46 @@ var _ = Describe("Review App Action", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(addedChecks()).To(BeEmpty())
+	})
+
+	It("deploys with the ID token of the workflow without the webhook secret", func() {
+		// Serves the ID tokens of the workflow like the runner, for jobs with the id-token: write permission
+		var tokenRequest *http.Request
+		tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tokenRequest = r
+			_ = json.NewEncoder(w).Encode(map[string]string{"value": issuer.sign(map[string]any{
+				"aud":        r.URL.Query().Get("audience"),
+				"repository": "o/r",
+				"head_ref":   "feature/login",
+				"ref":        "refs/pull/7/merge",
+			})})
+		}))
+		DeferCleanup(tokens.Close)
+
+		outputs, err := runAction("synchronize", "",
+			"ACTIONS_ID_TOKEN_REQUEST_URL="+tokens.URL+"/token?api-version=2.0",
+			"ACTIONS_ID_TOKEN_REQUEST_TOKEN=request-token",
+		)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outputs).To(HavePrefix("review_app_url=https://feature-login.example.com\n"))
+		Expect(tokenRequest.Header.Get("Authorization")).To(Equal("bearer request-token"))
+		Expect(tokenRequest.URL.Query().Get("audience")).To(Equal("review-app-operator"))
+		Expect(tokenRequest.URL.Query().Get("api-version")).To(Equal("2.0"))
+
+		_, err = runAction("closed", "",
+			"ACTIONS_ID_TOKEN_REQUEST_URL="+tokens.URL+"/token?api-version=2.0",
+			"ACTIONS_ID_TOKEN_REQUEST_TOKEN=request-token",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(apierrors.IsNotFound(c.Get(context.Background(), prKey, &reviewapps.PullRequest{}))).To(BeTrue())
+	})
+
+	It("fails without the webhook secret or the id-token: write permission", func() {
+		outputs, err := runAction("synchronize", "", "ACTIONS_ID_TOKEN_REQUEST_URL=", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=")
+
+		Expect(err).To(HaveOccurred())
+		Expect(outputs).To(BeEmpty())
 	})
 
 	It("fails when the webhook rejects the signature", func() {

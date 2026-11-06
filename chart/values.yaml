@@ -16,6 +16,12 @@ webhook:
   # How long a stopping webhook waits for deploys that stream their progress to finish
   terminationGracePeriodSeconds: 300
 
+  # Deploys authenticate with the webhook secret, or with the GitHub Actions ID token of their
+  # workflow when the ReviewAppConfig allows its repository in spec.repositories.
+  # Turn acceptSecret off once every workflow deploys with ID tokens, so that the secret can't
+  # deploy anymore
+  acceptSecret: true
+
   # The webhook secret that will be used by the CI to trigger pull request events
   secretKeyRef:
     name: webhook-secret
@@ -25,6 +31,14 @@ webhook:
   # Disable it to create the secret yourself when the chart is rendered with `helm template`,
   # like by Argo CD, where the existing secret can't be looked up and would get a new value on every render
   createSecret: true
+
+  # The GitHub Actions ID tokens that deploys can authenticate with
+  oidc:
+    # The issuer of the ID tokens, which is GitHub Actions or a GitHub Enterprise.
+    # Empty only accepts deploys signed with the webhook secret
+    issuer: https://token.actions.githubusercontent.com
+    # The audience that the action requests the ID tokens for, in its oidc_audience input
+    audience: review-app-operator
 
   # The host that the Review App Action sends deploys to, like review-app-webhooks.example.com,
   # which the Ingress and the HTTPRoute route to the webhook. Earlier charts set it in ingress.host

@@ -4044,6 +4044,12 @@ spec:
                 - message: deployments must have different names
                   rule: 'self.all(d, self.filter(e, (has(e.name) ? e.name : '''')
                     == (has(d.name) ? d.name : '''')).size() == 1)'
+              repositories:
+                items:
+                  pattern: ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$
+                  type: string
+                maxItems: 64
+                type: array
               scaleDownAfter:
                 pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$
                 type: string
