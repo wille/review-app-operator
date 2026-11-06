@@ -66,3 +66,15 @@ func TestRunRefusesCommandsBeforeTheKindClusterIsPinned(t *testing.T) {
 		t.Fatal("expected Run to refuse commands before UseKindCluster")
 	}
 }
+
+func TestStartRefusesCommandsBeforeTheKindClusterIsPinned(t *testing.T) {
+	kubeconfig = ""
+
+	cmd := exec.Command("true")
+	if err := Start(cmd); err == nil {
+		t.Fatal("expected Start to refuse commands before UseKindCluster")
+	}
+	if cmd.Process != nil {
+		t.Fatal("expected Start not to start the command")
+	}
+}

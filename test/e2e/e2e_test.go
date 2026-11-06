@@ -19,8 +19,14 @@ limitations under the License.
 package e2e
 
 import (
+	"bufio"
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,10 +100,15 @@ func kubectl(args ...string) (string, error) {
 
 // deploymentName is the name of the Deployment, Service and Lease of the review app
 func deploymentName() string {
+	return deploymentNameOf(branchName)
+}
+
+// deploymentNameOf is the name of the Deployment of the review app of a branch
+func deploymentNameOf(branch string) string {
 	reviewApp := &reviewapps.ReviewAppConfig{ObjectMeta: metav1.ObjectMeta{Name: reviewAppName}}
 	pr := &reviewapps.PullRequest{
-		ObjectMeta: metav1.ObjectMeta{Name: reviewAppName + "-" + branchName},
-		Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: reviewAppName, BranchName: branchName},
+		ObjectMeta: metav1.ObjectMeta{Name: utils.GetResourceName(reviewAppName, branch)},
+		Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: reviewAppName, BranchName: branch},
 	}
 	return utils.GetDeploymentName(reviewApp, pr, "web")
 }
@@ -229,5 +240,164 @@ var _ = Describe("Review App Operator", Ordered, func() {
 	It("scales the review app down when it is no longer visited", func() {
 		// After scaleDownAfter has passed since the last visit
 		Eventually(replicas, 3*time.Minute, 5*time.Second).Should(Equal("0"))
+	})
+
+	Context("when the Review App Action deploys a pull request through the webhook", Ordered, func() {
+		// The pull request that the action deploys, which isn't visited, so its review app is
+		// scaled down and pulls no image
+		const deployBranch = "webhook-deploy"
+		pullRequestName := utils.GetResourceName(reviewAppName, deployBranch)
+		deployment := deploymentNameOf(deployBranch)
+
+		var webhookURL, webhookSecret string
+
+		BeforeAll(func() {
+			By("reading the webhook secret that the chart created")
+			secret, err := kubectl("get", "secret", "webhook-secret", "-n", namespace, "-o", "jsonpath={.data.webhook-secret}")
+			Expect(err).NotTo(HaveOccurred())
+			decoded, err := base64.StdEncoding.DecodeString(secret)
+			Expect(err).NotTo(HaveOccurred())
+			webhookSecret = string(decoded)
+
+			By("forwarding a local port to the webhook, like the ingress does")
+			portForward := exec.Command("kubectl", "port-forward", "-n", namespace, "svc/review-app-operator-webhook", ":8080")
+			stdout, err := portForward.StdoutPipe()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(testutils.Start(portForward)).To(Succeed())
+			DeferCleanup(func() {
+				_ = portForward.Process.Kill()
+				_ = portForward.Wait()
+			})
+
+			// kubectl prints "Forwarding from 127.0.0.1:<port> -> 8080" once it listens
+			address := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(stdout)
+				for scanner.Scan() {
+					if local, ok := strings.CutPrefix(scanner.Text(), "Forwarding from 127.0.0.1:"); ok {
+						port, _, _ := strings.Cut(local, " ")
+						address <- "http://127.0.0.1:" + port
+						return
+					}
+				}
+			}()
+			Eventually(address, 30*time.Second).Should(Receive(&webhookURL))
+		})
+
+		// runAction runs the action script for a pull request event like GitHub runs it, and
+		// returns its outputs
+		runAction := func(action, image string) (map[string]string, error) {
+			dir := GinkgoT().TempDir()
+
+			event := filepath.Join(dir, "event.json")
+			Expect(os.WriteFile(event, []byte(`{
+				"action": "`+action+`",
+				"number": 7,
+				"repository": {"html_url": "https://github.com/octo-org/smoke", "full_name": "octo-org/smoke"},
+				"pull_request": {
+					"head": {"ref": "`+deployBranch+`", "sha": "0123456789abcdef"},
+					"html_url": "https://github.com/octo-org/smoke/pull/7",
+					"merged": false
+				},
+				"sender": {"html_url": "https://github.com/octocat"}
+			}`), 0o600)).To(Succeed())
+
+			output := filepath.Join(dir, "github_output")
+			Expect(os.WriteFile(output, nil, 0o600)).To(Succeed())
+
+			projectDir, err := testutils.GetProjectDir()
+			Expect(err).NotTo(HaveOccurred())
+
+			// The action only reaches the webhook, so it doesn't run with the kubeconfig of the
+			// Kind cluster, nor any other
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "bash", filepath.Join(projectDir, "action-entrypoint.sh"))
+			for _, env := range os.Environ() {
+				if name, _, _ := strings.Cut(env, "="); name != "KUBECONFIG" {
+					cmd.Env = append(cmd.Env, env)
+				}
+			}
+			cmd.Env = append(cmd.Env,
+				"GITHUB_EVENT_NAME=pull_request",
+				"GITHUB_EVENT_PATH="+event,
+				"GITHUB_OUTPUT="+output,
+				"RUNNER_TEMP="+dir,
+				"INPUT_REVIEW_APP_NAME="+reviewAppName,
+				"INPUT_REVIEW_APP_NAMESPACE="+reviewAppsNamespace,
+				"INPUT_WEBHOOK_URL="+webhookURL,
+				"INPUT_WEBHOOK_SECRET="+webhookSecret,
+				"INPUT_IMAGE="+image,
+				"INPUT_CHECK=false",
+			)
+			log, err := cmd.CombinedOutput()
+			_, _ = fmt.Fprintf(GinkgoWriter, "$ action %s %s\n%s\n", action, image, log)
+
+			outputs := map[string]string{}
+			written, readErr := os.ReadFile(output)
+			Expect(readErr).NotTo(HaveOccurred())
+			for _, line := range strings.Split(strings.TrimSpace(string(written)), "\n") {
+				if name, value, ok := strings.Cut(line, "="); ok {
+					outputs[name] = value
+				}
+			}
+
+			return outputs, err
+		}
+
+		// image returns the image of the target container of the deployment
+		image := func() (string, error) {
+			return kubectl("get", "deployment", deployment, "-n", reviewAppsNamespace,
+				"-o", `jsonpath={.spec.template.spec.containers[?(@.name=="web")].image}`)
+		}
+
+		It("deploys the pull request and reports its URLs", func() {
+			outputs, err := runAction("opened", appImage)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(outputs).To(HaveKeyWithValue("review_app_url", "https://webhook-deploy.smoke.example.com"))
+			var urls map[string][]string
+			Expect(json.Unmarshal([]byte(outputs["review_app_urls"]), &urls)).To(Succeed())
+			Expect(urls).To(Equal(map[string][]string{"web": {"https://webhook-deploy.smoke.example.com"}}))
+
+			// The controller updates the status right after the deployment, which the action waits for
+			Eventually(func() (string, error) {
+				return kubectl("get", "pullrequests", pullRequestName, "-n", reviewAppsNamespace,
+					"-o", `jsonpath={.status.url} {.status.conditions[?(@.type=="Reconciled")].status}`)
+			}, 30*time.Second, time.Second).Should(Equal("https://webhook-deploy.smoke.example.com True"))
+			Expect(image()).To(Equal(appImage))
+		})
+
+		It("keeps the environment overrides of the pull request when a new image is pushed", func() {
+			apiURL := func() (string, error) {
+				return kubectl("get", "deployment", deployment, "-n", reviewAppsNamespace,
+					"-o", `jsonpath={.spec.template.spec.containers[?(@.name=="web")].env[?(@.name=="API_URL")].value}`)
+			}
+
+			_, err := kubectl("patch", "pullrequests", pullRequestName, "-n", reviewAppsNamespace, "--type", "merge",
+				"-p", `{"spec":{"deployments":[{"name":"web","env":[{"name":"API_URL","value":"https://api.example.com"}]}]}}`)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(apiURL, time.Minute, 2*time.Second).Should(Equal("https://api.example.com"))
+
+			// Scaled down, the review app doesn't pull the new image
+			_, err = runAction("synchronize", "nginx:1.28-alpine")
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(image()).To(Equal("nginx:1.28-alpine"))
+			Expect(apiURL()).To(Equal("https://api.example.com"))
+		})
+
+		It("deletes the review app when the pull request is closed", func() {
+			_, err := runAction("closed", "")
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = kubectl("get", "pullrequests", pullRequestName, "-n", reviewAppsNamespace)
+			Expect(err).To(MatchError(ContainSubstring("NotFound")))
+
+			// The garbage collector deletes what the PullRequest owned
+			Eventually(func() (string, error) {
+				return kubectl("get", "deployments", "-n", reviewAppsNamespace, "-o", "name")
+			}, time.Minute, 2*time.Second).ShouldNot(ContainSubstring(deployment))
+		})
 	})
 })

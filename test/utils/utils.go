@@ -110,11 +110,11 @@ func checkLocalCluster(kubeconfig []byte, context string) error {
 	return nil
 }
 
-// Run executes the provided command within this context. Commands only run once UseKindCluster
-// has pinned the Kind cluster, and always with its kubeconfig
-func Run(cmd *exec.Cmd) ([]byte, error) {
+// pin makes a command run in the project directory with the kubeconfig of the Kind cluster, and
+// refuses commands before UseKindCluster has pinned it
+func pin(cmd *exec.Cmd) error {
 	if kubeconfig == "" {
-		return nil, errors.New("refusing to run commands before UseKindCluster pins the e2e tests to the Kind cluster")
+		return errors.New("refusing to run commands before UseKindCluster pins the e2e tests to the Kind cluster")
 	}
 
 	dir, _ := GetProjectDir()
@@ -131,6 +131,27 @@ func Run(cmd *exec.Cmd) ([]byte, error) {
 			continue
 		}
 		cmd.Env = append(cmd.Env, env)
+	}
+
+	return nil
+}
+
+// Start starts a command that keeps running, like kubectl port-forward, pinned to the Kind
+// cluster like Run. The caller stops it
+func Start(cmd *exec.Cmd) error {
+	if err := pin(cmd); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(GinkgoWriter, "starting: %s\n", strings.Join(cmd.Args, " "))
+	return cmd.Start()
+}
+
+// Run executes the provided command within this context. Commands only run once UseKindCluster
+// has pinned the Kind cluster, and always with its kubeconfig
+func Run(cmd *exec.Cmd) ([]byte, error) {
+	if err := pin(cmd); err != nil {
+		return nil, err
 	}
 
 	command := strings.Join(cmd.Args, " ")
