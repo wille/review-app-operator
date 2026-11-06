@@ -271,7 +271,11 @@ var _ = Describe("Activity", func() {
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &reviewapps.PullRequest{}))
 			}, 15*time.Second, 250*time.Millisecond).Should(BeTrue())
-			Expect(testutil.ToFloat64(metrics.Deleted.WithLabelValues("lease-delete"))).To(BeEquivalentTo(1))
+			// The controller counts the review app once its delete returns, which can be after the
+			// PullRequest is gone
+			Eventually(func() float64 {
+				return testutil.ToFloat64(metrics.Deleted.WithLabelValues("lease-delete"))
+			}, 5*time.Second, 50*time.Millisecond).Should(BeEquivalentTo(1))
 		})
 
 		It("keeps a review app that is visited", func() {
