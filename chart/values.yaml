@@ -2,6 +2,11 @@
 # The user will be prompted to refresh the page to try again and given the deployment status
 connectionTimeout: 10s
 
+# Install and upgrade the CRDs with the chart. They are kept when the chart is uninstalled, as
+# deleting them deletes every review app. Turn it off to manage the CRDs yourself
+crds:
+  install: true
+
 # The active namespaces
 namespaces:
   - review-apps

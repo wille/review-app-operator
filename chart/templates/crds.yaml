@@ -1,0 +1,14 @@
+{{- /*
+The CRDs are templates instead of in crds/, which Helm only installs and never upgrades, so that
+upgrading the chart upgrades them. Helm keeps them when the chart is uninstalled, as deleting
+them would delete every review app
+*/}}
+{{- if .Values.crds.install }}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $_ := set $crd.metadata "annotations" (merge (dict "helm.sh/resource-policy" "keep") ($crd.metadata.annotations | default dict)) }}
+{{- $_ := set $crd.metadata "labels" (merge (include "chart.labels" $ | fromYaml) ($crd.metadata.labels | default dict)) }}
+---
+{{ toYaml $crd }}
+{{- end }}
+{{- end }}

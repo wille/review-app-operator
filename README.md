@@ -98,12 +98,17 @@ $ helm install review-app-operator oci://ghcr.io/wille/charts/review-app-operato
     -f values.yaml
 ```
 
+The chart installs and upgrades the `ReviewAppConfig` and `PullRequest` CRDs. Uninstalling the chart keeps them, as deleting them deletes every review app. Set `crds.install: false` to manage the CRDs yourself.
+
 > [!IMPORTANT]
-> Helm does not upgrade CRDs. Apply the CRDs of the new chart version before upgrading:
+> Charts before 0.4.0 installed the CRDs without upgrading them, and told to apply them with `kubectl`. To upgrade from them, the chart takes the CRDs over once:
 >
 > ```bash
-> $ helm show crds oci://ghcr.io/wille/charts/review-app-operator --version <version> | kubectl apply --server-side -f -
+> $ helm upgrade review-app-operator oci://ghcr.io/wille/charts/review-app-operator \
+>     --namespace review-app-operator-system -f values.yaml --take-ownership --force-conflicts
 > ```
+>
+> `--take-ownership` lets the release own the CRDs that it didn't create, and `--force-conflicts` lets Helm 4 change the fields that `kubectl apply --server-side` set. Later upgrades need neither.
 
 ## Creating a Review App
 
