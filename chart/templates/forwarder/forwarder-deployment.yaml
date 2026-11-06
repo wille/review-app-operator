@@ -25,8 +25,17 @@ spec:
         - --health-probe-bind-address=:8081
         # Finish the requests in flight within the grace period, after the preStop sleep
         - --graceful-shutdown-timeout={{ sub .Values.forwarder.terminationGracePeriodSeconds 10 }}s
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ .Values.metrics.port }}
+        {{- end }}
         command:
         - /manager
+        {{- if .Values.metrics.enabled }}
+        ports:
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+          protocol: TCP
+        {{- end }}
         env:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}

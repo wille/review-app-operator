@@ -16,6 +16,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 	"github.com/wille/review-app-operator/internal/utils"
 )
 
@@ -151,6 +155,28 @@ var _ = Describe("Forwarder", func() {
 		Expect(rec.Code).To(Equal(http.StatusOK))
 		Expect(rec.Body.String()).To(Equal("hello"))
 		Expect(dials.Load()).To(BeEquivalentTo(3))
+	})
+
+	It("records the responses of the review app, and how long requests waited for it to start", func() {
+		refusedDials.Store(2)
+		upstream(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+		})
+		responses := metrics.Requests.WithLabelValues("app", "web", "418")
+		wait := metrics.StartWait.WithLabelValues("app", "web")
+		requestsBefore, waitBefore := testutil.ToFloat64(responses), histogramCount(wait)
+
+		rec := httptest.NewRecorder()
+		fwd.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://feature.example.com/", nil))
+
+		Expect(rec.Code).To(Equal(http.StatusTeapot))
+		Expect(testutil.ToFloat64(responses) - requestsBefore).To(BeEquivalentTo(1))
+		Expect(histogramCount(wait) - waitBefore).To(BeEquivalentTo(1))
+
+		// A review app that accepts the connection right away doesn't make the request wait
+		fwd.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://feature.example.com/", nil))
+		Expect(testutil.ToFloat64(responses) - requestsBefore).To(BeEquivalentTo(2))
+		Expect(histogramCount(wait) - waitBefore).To(BeEquivalentTo(1))
 	})
 
 	It("streams the request body instead of buffering it", func() {
@@ -425,6 +451,17 @@ var _ = Describe("Forwarder", func() {
 			Expect(rec.Header().Get("Retry-After")).NotTo(BeEmpty())
 		})
 
+		It("records the requests that the review app didn't start in time for", func() {
+			timeouts := metrics.StartTimeouts.WithLabelValues("app", "web")
+			responses := metrics.Requests.WithLabelValues("app", "web", "503")
+			timeoutsBefore, responsesBefore := testutil.ToFloat64(timeouts), testutil.ToFloat64(responses)
+
+			fwd.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://feature.example.com/api", nil))
+
+			Expect(testutil.ToFloat64(timeouts) - timeoutsBefore).To(BeEquivalentTo(1))
+			Expect(testutil.ToFloat64(responses) - responsesBefore).To(BeEquivalentTo(1))
+		})
+
 		It("waits for the connection timeout of the ReviewAppConfig instead", func() {
 			fwd.ConnectionTimeout = time.Minute
 
@@ -472,4 +509,11 @@ func requestBody(s string) io.ReadCloser {
 		_ = w.Close()
 	}()
 	return r
+}
+
+// histogramCount returns how many values a histogram observed
+func histogramCount(observer prometheus.Observer) uint64 {
+	var metric dto.Metric
+	Expect(observer.(prometheus.Histogram).Write(&metric)).To(Succeed())
+	return metric.GetHistogram().GetSampleCount()
 }

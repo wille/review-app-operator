@@ -26,8 +26,17 @@ spec:
         - --graceful-shutdown-timeout={{ sub .Values.webhook.terminationGracePeriodSeconds 10 }}s
         - --oidc-issuer={{ .Values.webhook.oidc.issuer }}
         - --oidc-audience={{ .Values.webhook.oidc.audience }}
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ .Values.metrics.port }}
+        {{- end }}
         command:
         - /manager
+        {{- if .Values.metrics.enabled }}
+        ports:
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+          protocol: TCP
+        {{- end }}
         env:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}

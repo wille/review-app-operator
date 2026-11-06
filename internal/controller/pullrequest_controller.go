@@ -378,6 +378,7 @@ func (r *PullRequestReconciler) reconcileDeployment(
 		if err := r.Create(ctx, desiredDeployment); err != nil {
 			return deploymentActivity{}, err
 		}
+		recordScale(reviewApp.Name, deploymentSpec.Name, 0, replicas)
 
 		log.Info("Deployment created", "deploymentName", deploymentName)
 	} else {
@@ -429,7 +430,8 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			running, until = runsUntil(lastActive(lease, pr, startOnDeploy), scaleDownAfter, now)
 		}
 
-		replicas := *runningDeployment.Spec.Replicas
+		previousReplicas := *runningDeployment.Spec.Replicas
+		replicas := previousReplicas
 		if replicas == 0 {
 			// Start the deployment when it is active. A deployment that runs keeps the
 			// replicas it was scaled to by hand
@@ -451,6 +453,8 @@ func (r *PullRequestReconciler) reconcileDeployment(
 			if err := r.Patch(ctx, &runningDeployment, patch); err != nil {
 				return deploymentActivity{}, err
 			}
+
+			recordScale(reviewApp.Name, deploymentSpec.Name, previousReplicas, replicas)
 
 			log.Info("Deployment updated", "deploymentName", deploymentName)
 		}

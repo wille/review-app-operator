@@ -15,6 +15,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 )
 
 func TestWebhook(t *testing.T) {
@@ -278,6 +280,8 @@ var _ = Describe("Deploy webhook", func() {
 			Reason: "ProgressDeadlineExceeded",
 		}}
 		Expect(c.Create(context.Background(), deployment)).To(Succeed())
+		failed := metrics.Deploys.WithLabelValues("app", metrics.DeployFailed)
+		failedBefore := testutil.ToFloat64(failed)
 
 		rec := serve(http.MethodPost, webhookBody(http.MethodPost, time.Now()))
 
@@ -286,6 +290,7 @@ var _ = Describe("Deploy webhook", func() {
 		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
 		Expect(lines[len(lines)-1]).To(HavePrefix("Error deploying: "))
 		Expect(rec.Body.String()).NotTo(ContainSubstring("Review App URL"))
+		Expect(testutil.ToFloat64(failed) - failedBefore).To(BeEquivalentTo(1))
 	})
 
 	It("reports the review app URL with the random ID of the PullRequest", func() {

@@ -15,6 +15,9 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 )
 
 // fakeIssuer issues ID tokens like GitHub Actions, and serves the keys to verify them with
@@ -190,10 +194,16 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 	}
 
 	It("deploys the pull request of a repository that the ReviewAppConfig allows", func() {
+		succeeded := metrics.Deploys.WithLabelValues("app", metrics.DeploySucceeded)
+		duration := metrics.DeployDuration.WithLabelValues("app")
+		succeededBefore, durationBefore := testutil.ToFloat64(succeeded), histogramCount(duration)
+
 		rec := serve(http.MethodPost, issuer.sign(nil))
 
 		Expect(rec.Code).To(Equal(http.StatusCreated), rec.Body.String())
 		Expect(rec.Body.String()).To(HaveSuffix("Review App URL: https://feature.example.com"))
+		Expect(testutil.ToFloat64(succeeded) - succeededBefore).To(BeEquivalentTo(1))
+		Expect(histogramCount(duration) - durationBefore).To(BeEquivalentTo(1))
 	})
 
 	It("deletes the review app of the pull request", func() {
@@ -223,7 +233,11 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 	)
 
 	It("creates no review app for a forbidden ID token", func() {
+		rejected := metrics.Deploys.WithLabelValues("app", metrics.DeployRejected)
+		rejectedBefore := testutil.ToFloat64(rejected)
+
 		Expect(serve(http.MethodPost, issuer.sign(map[string]any{"repository": "octo-org/attacker"})).Code).To(Equal(http.StatusForbidden))
+		Expect(testutil.ToFloat64(rejected) - rejectedBefore).To(BeEquivalentTo(1))
 
 		var prs reviewapps.PullRequestList
 		Expect(c.List(context.Background(), &prs)).To(Succeed())
@@ -284,3 +298,10 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 		Expect(serve(http.MethodPost, issuer.sign(nil)).Code).To(Equal(http.StatusCreated))
 	})
 })
+
+// histogramCount returns how many values a histogram observed
+func histogramCount(observer prometheus.Observer) uint64 {
+	var metric dto.Metric
+	Expect(observer.(prometheus.Histogram).Write(&metric)).To(Succeed())
+	return metric.GetHistogram().GetSampleCount()
+}

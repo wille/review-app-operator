@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/go-logr/logr"
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 	"github.com/wille/review-app-operator/internal/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -144,6 +146,10 @@ type startingTransport struct {
 
 	// waiting is called for every failed connection attempt
 	waiting func(attempt int, err error)
+
+	// started is called with how long the request waited for the review app to accept the
+	// connection, when it couldn't at first
+	started func(waited time.Duration)
 }
 
 func (t startingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -154,6 +160,7 @@ func (t startingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		req.Body = io.NopCloser(req.Body)
 	}
 
+	start := time.Now()
 	timeout := time.NewTimer(t.timeout)
 	defer timeout.Stop()
 
@@ -163,6 +170,9 @@ func (t startingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		// Only retry while the review app can't be connected to. Once the request
 		// has been sent it may have been processed, and the body has been read
 		if err == nil || !isDialError(err) {
+			if attempt > 0 && t.started != nil {
+				t.started(time.Since(start))
+			}
 			return resp, err
 		}
 
@@ -263,6 +273,11 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	deployment := client.ObjectKey{Namespace: pr.Namespace, Name: deploymentName}
 
+	// The metrics of the review app, by the names of its ReviewAppConfig and deployment
+	responded := func(code int) {
+		metrics.Requests.WithLabelValues(reviewApp.Name, deploymentSpecName, strconv.Itoa(code)).Inc()
+	}
+
 	// The reverse proxy passes WebSocket upgrades through and sends streamed responses,
 	// like server-sent events, to the client as the review app writes them
 	proxy := &httputil.ReverseProxy{
@@ -292,9 +307,13 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					log.Info(fmt.Sprintf("Connection attempt: %s: %s", fwd.deploymentStatus(r.Context(), log, deployment), err))
 				}
 			},
+			started: func(waited time.Duration) {
+				metrics.StartWait.WithLabelValues(reviewApp.Name, deploymentSpecName).Observe(waited.Seconds())
+			},
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			log.Info("Forwarding response", "status", resp.Status)
+			responded(resp.StatusCode)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -302,12 +321,15 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, errNotStarted):
 				status := fwd.deploymentStatus(r.Context(), log, deployment)
 				log.Info(fmt.Sprintf("Upstream timeout: %s", status))
-				notStartedResponse(w, r, status)
+				metrics.StartTimeouts.WithLabelValues(reviewApp.Name, deploymentSpecName).Inc()
+				responded(notStartedResponse(w, r, status))
 			case errors.Is(err, context.Canceled):
+				// The client left, so there is no response
 				log.Info("Connection reset")
 			default:
 				log.Error(err, "Error forwarding request")
 				http.Error(w, "Bad gateway", http.StatusBadGateway)
+				responded(http.StatusBadGateway)
 			}
 		},
 	}
@@ -368,15 +390,15 @@ func (fwd Forwarder) deploymentStatus(ctx context.Context, log logr.Logger, key 
 
 // notStartedResponse is sent when the review app was not scaled up within the connection timeout.
 // Browsers loading a page get a page that reloads until the review app has started, while other
-// requests, like API calls, are told to retry later
-func notStartedResponse(w http.ResponseWriter, r *http.Request, status string) {
+// requests, like API calls, are told to retry later. It returns the status code of the response
+func notStartedResponse(w http.ResponseWriter, r *http.Request, status string) int {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	if r.Method != http.MethodGet || !strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, "The review app is starting, retry later: "+status, http.StatusServiceUnavailable)
-		return
+		return http.StatusServiceUnavailable
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -391,6 +413,7 @@ func notStartedResponse(w http.ResponseWriter, r *http.Request, status string) {
 		<p>%s</p>
 	</body>
 	</html>`, html.EscapeString(status))
+	return http.StatusAccepted
 }
 
 // isDialError reports whether err is a failure to connect to the review app

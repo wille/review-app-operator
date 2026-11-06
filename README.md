@@ -341,6 +341,34 @@ $ kubectl get pullrequests --namespace staging -o json | jq -r --arg branch my/b
 
 Changing PullRequests needs the `patch` permission on `pullrequests`, which the chart's `pullrequest-editor-role` ClusterRole grants.
 
+## Metrics
+
+The controller, forwarder and webhook serve their metrics on port 8082 at `/metrics`, with those of controller-runtime. `metrics.podMonitor.enabled` creates a PodMonitor for the [Prometheus Operator](https://prometheus-operator.dev), with the `metrics.podMonitor.labels` that your Prometheus selects PodMonitors by.
+
+| Metric | Component | Description |
+| --- | --- | --- |
+| `review_app_requests_total` | forwarder | Responses to requests for review apps, by status `code` |
+| `review_app_start_wait_seconds` | forwarder | How long requests waited for review apps that were starting to accept connections |
+| `review_app_start_timeouts_total` | forwarder | Requests that got the page that reloads, or `503 Service Unavailable`, as their review app didn't start within the connection timeout |
+| `review_app_scaled_total` | controller | Deployments that the controller started (`direction="up"`) and scaled down (`direction="down"`) |
+| `review_app_deleted_total` | controller | Review apps deleted after `deleteAfter` |
+| `review_app_deployments` | controller | Deployments by `state`, `running` or `scaled_down`, only reported by the leading replica |
+| `review_app_deploys_total` | webhook | Deploys by `result`: `succeeded`, `failed`, or `rejected` for their ID token |
+| `review_app_deploy_duration_seconds` | webhook | How long successful deploys took until the review app ran the new image |
+
+The metrics are labelled by `review_app_config` and `deployment`, the names of the ReviewAppConfig and its deployment, but never by branch. For example:
+
+```promql
+# How long visits waited for review apps to start, 90th percentile
+histogram_quantile(0.9, sum by (review_app_config, le) (rate(review_app_start_wait_seconds_bucket[1d])))
+
+# Visits that got the page that reloads, as the review app didn't start within connectionTimeout
+sum by (review_app_config) (increase(review_app_start_timeouts_total[1d]))
+
+# Running review apps
+sum by (review_app_config) (review_app_deployments{state="running"})
+```
+
 ## Releasing
 
 The controller and the Helm chart are released separately.

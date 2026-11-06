@@ -2,6 +2,19 @@
 # The user will be prompted to refresh the page to try again and given the deployment status
 connectionTimeout: 10s
 
+# The controller, forwarder and webhook serve the metrics of the review apps, and those of
+# controller-runtime, on this port
+metrics:
+  enabled: true
+  port: 8082
+  # A PodMonitor for the Prometheus Operator to scrape the metrics of every component
+  podMonitor:
+    enabled: false
+    # Labels that the Prometheus selects PodMonitors by, like release: kube-prometheus-stack
+    labels: {}
+    # How often to scrape the metrics, instead of the default of the Prometheus
+    interval: ""
+
 # Install and upgrade the CRDs with the chart. They are kept when the chart is uninstalled, as
 # deleting them deletes every review app. Turn it off to manage the CRDs yourself
 crds:

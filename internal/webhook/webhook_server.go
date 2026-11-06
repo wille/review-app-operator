@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 	"github.com/wille/review-app-operator/internal/utils"
 )
 
@@ -229,10 +230,18 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Deploys are only counted for ReviewAppConfigs that exist, so that requests can't add labels
+	deployed := func(result string) {
+		if r.Method == http.MethodPost {
+			metrics.Deploys.WithLabelValues(reviewApp.Name, result).Inc()
+		}
+	}
+
 	// An ID token only allows deploys of the pull requests of the repositories of the ReviewAppConfig
 	if claims != nil {
 		if err := authorizeIDToken(&reviewApp, *claims, webhook); err != nil {
 			log.Error(err, "Forbidden webhook", "repository", claims.Repository)
+			deployed(metrics.DeployRejected)
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -269,12 +278,14 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case http.MethodPost:
 		log.Info("Create webhook received", "webhook", webhook)
+		start := time.Now()
 
 		// The ReviewAppConfig must define at least one deployment with at least
 		// one host template before we can deploy and report back a URL.
 		if len(reviewApp.Spec.Deployments) == 0 || len(reviewApp.Spec.Deployments[0].HostTemplates) == 0 {
 			err := errors.New("ReviewAppConfig has no deployments or host templates configured")
 			log.Error(err, "Invalid ReviewAppConfig", "name", reviewApp.Name)
+			deployed(metrics.DeployFailed)
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
@@ -291,6 +302,7 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// The status code can't be changed once the deployment progress has started
 			// streaming, so clients must check that the response ends with the review app URL
 			log.Error(err, "Error deploying", "name", name)
+			deployed(metrics.DeployFailed)
 			http.Error(w, "Error deploying: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -298,9 +310,13 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		urls, err := utils.GetURLs(reviewApp, *pr)
 		if err != nil {
 			log.Error(err, "Error creating deployment url from template")
+			deployed(metrics.DeployFailed)
 			http.Error(w, "Error creating deployment url from template", http.StatusInternalServerError)
 			return
 		}
+
+		deployed(metrics.DeploySucceeded)
+		metrics.DeployDuration.WithLabelValues(reviewApp.Name).Observe(time.Since(start).Seconds())
 
 		// The URL of the review app is the first URL of the first deployment, which GitHub links
 		// the deployment of the pull request to

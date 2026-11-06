@@ -1,10 +1,13 @@
 package controller
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // dot-import is idiomatic for Ginkgo specs
 	. "github.com/onsi/gomega"    //nolint:staticcheck // dot-import is idiomatic for Gomega matchers
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 	"github.com/wille/review-app-operator/internal/utils"
 )
 
@@ -183,6 +187,9 @@ var _ = Describe("Activity", func() {
 			visit(key)
 
 			Eventually(replicas(key), 10*time.Second, 250*time.Millisecond).Should(BeEquivalentTo(1))
+			Eventually(func() float64 {
+				return testutil.ToFloat64(metrics.Scaled.WithLabelValues("lease-wake", "web", "up"))
+			}, 5*time.Second, 100*time.Millisecond).Should(BeEquivalentTo(1))
 		})
 
 		It("scales a deployment down when it is not visited for scaleDownAfter", func() {
@@ -193,6 +200,54 @@ var _ = Describe("Activity", func() {
 			Eventually(replicas(key), 10*time.Second, 250*time.Millisecond).Should(BeEquivalentTo(1))
 
 			Eventually(replicas(key), 10*time.Second, 250*time.Millisecond).Should(BeEquivalentTo(0))
+			Eventually(func() float64 {
+				return testutil.ToFloat64(metrics.Scaled.WithLabelValues("lease-expire", "web", "down"))
+			}, 5*time.Second, 100*time.Millisecond).Should(BeEquivalentTo(1))
+			Expect(testutil.ToFloat64(metrics.Scaled.WithLabelValues("lease-expire", "web", "up"))).To(BeEquivalentTo(1))
+		})
+
+		It("reports the deployments by whether they run, only while the controller leads", func() {
+			_, running := reviewApp("metrics-running", func(spec *reviewapps.ReviewAppConfigSpec) {
+				spec.StartOnDeploy = true
+				spec.ScaleDownAfter = metav1.Duration{Duration: time.Hour}
+			})
+			_, scaledDown := reviewApp("metrics-scaled-down", func(spec *reviewapps.ReviewAppConfigSpec) {})
+			Eventually(replicas(running), 10*time.Second, 250*time.Millisecond).Should(BeEquivalentTo(1))
+			Eventually(replicas(scaledDown), 10*time.Second, 250*time.Millisecond).Should(BeEquivalentTo(0))
+
+			// gauges returns the values of review_app_deployments by ReviewAppConfig and state
+			gauges := func(collector prometheus.Collector) map[string]float64 {
+				registry := prometheus.NewPedanticRegistry()
+				Expect(registry.Register(collector)).To(Succeed())
+				families, err := registry.Gather()
+				Expect(err).NotTo(HaveOccurred())
+
+				values := map[string]float64{}
+				for _, family := range families {
+					for _, metric := range family.GetMetric() {
+						labels := map[string]string{}
+						for _, label := range metric.GetLabel() {
+							labels[label.GetName()] = label.GetValue()
+						}
+						if strings.HasPrefix(labels["review_app_config"], "metrics-") {
+							values[labels["review_app_config"]+" "+labels["deployment"]+" "+labels["state"]] = metric.GetGauge().GetValue()
+						}
+					}
+				}
+				return values
+			}
+
+			elected := make(chan struct{})
+			collector := DeploymentsCollector{Client: k8sClient, Elected: elected}
+			Expect(gauges(collector)).To(BeEmpty())
+
+			close(elected)
+			Expect(gauges(collector)).To(Equal(map[string]float64{
+				"metrics-running web running":         1,
+				"metrics-running web scaled_down":     0,
+				"metrics-scaled-down web running":     0,
+				"metrics-scaled-down web scaled_down": 1,
+			}))
 		})
 
 		It("keeps a deployment running while it is visited", func() {
@@ -216,6 +271,7 @@ var _ = Describe("Activity", func() {
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(pr), &reviewapps.PullRequest{}))
 			}, 15*time.Second, 250*time.Millisecond).Should(BeTrue())
+			Expect(testutil.ToFloat64(metrics.Deleted.WithLabelValues("lease-delete"))).To(BeEquivalentTo(1))
 		})
 
 		It("keeps a review app that is visited", func() {

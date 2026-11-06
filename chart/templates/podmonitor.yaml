@@ -1,0 +1,21 @@
+{{- if and .Values.metrics.enabled .Values.metrics.podMonitor.enabled }}
+# Scrapes the metrics of the controller, forwarder and webhook
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "chart.fullname" . }}
+  labels:
+  {{- include "chart.labels" . | nindent 4 }}
+  {{- with .Values.metrics.podMonitor.labels }}
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+    {{- include "chart.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      {{- with .Values.metrics.podMonitor.interval }}
+      interval: {{ . }}
+      {{- end }}
+{{- end }}

@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -180,6 +181,9 @@ func main() {
 			os.Exit(1)
 		}
 		// +kubebuilder:scaffold:builder
+
+		// The leading controller reports the deployments of the review apps on its metrics endpoint
+		ctrlmetrics.Registry.MustRegister(controller.DeploymentsCollector{Client: mgr.GetClient(), Elected: mgr.Elected()})
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

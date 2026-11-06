@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,6 +124,41 @@ func visit() (string, error) {
 	return kubectl("exec", "curl", "-n", reviewAppsNamespace, "--",
 		"curl", "--silent", "--max-time", "30", "--output", "/dev/null", "--write-out", "%{http_code}",
 		"--header", "Host: "+host, forwarderURL)
+}
+
+// controllerLeader returns the controller replica that holds the leader election Lease, whose
+// holder is <pod name>_<random ID>
+func controllerLeader() (string, error) {
+	holder, err := kubectl("get", "lease", "80807133.reviewapps.william.nu", "-n", namespace,
+		"-o", "jsonpath={.spec.holderIdentity}")
+	pod, _, _ := strings.Cut(holder, "_")
+	return pod, err
+}
+
+// podMetrics returns the metrics that a pod of the operator serves, through the API server
+func podMetrics(pod string) (string, error) {
+	return kubectl("get", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+pod+":8082/proxy/metrics")
+}
+
+// metricValue sums the values of the samples of a metric that have all the labels, like
+// review_app_config="smoke", in metrics of the Prometheus text format
+func metricValue(metrics, name string, labels ...string) float64 {
+	sum := 0.0
+	for _, line := range strings.Split(metrics, "\n") {
+		sample, value, ok := strings.Cut(line, "} ")
+		if !ok || !strings.HasPrefix(sample, name+"{") {
+			continue
+		}
+
+		matches := true
+		for _, label := range labels {
+			matches = matches && strings.Contains(sample, label)
+		}
+		if f, err := strconv.ParseFloat(strings.TrimSpace(value), 64); matches && err == nil {
+			sum += f
+		}
+	}
+	return sum
 }
 
 // dumpDiagnostics writes the state of the operator and the review app, to find out why a spec failed
@@ -237,22 +273,40 @@ var _ = Describe("Review App Operator", Ordered, func() {
 			To(HavePrefix("review-app-operator-forwarder-"))
 	})
 
+	It("serves the metrics of the review app", func() {
+		smoke := []string{`review_app_config="` + reviewAppName + `"`, `deployment="web"`}
+
+		// The visit went to either forwarder replica
+		pods, err := kubectl("get", "pods", "-n", namespace, "-l", "control-plane=forwarder",
+			"-o", "jsonpath={.items[*].metadata.name}")
+		Expect(err).NotTo(HaveOccurred())
+		var responses, starts float64
+		for _, pod := range strings.Fields(pods) {
+			metrics, err := podMetrics(pod)
+			Expect(err).NotTo(HaveOccurred())
+			responses += metricValue(metrics, "review_app_requests_total", append(smoke, `code="200"`)...)
+			starts += metricValue(metrics, "review_app_start_wait_seconds_count", smoke...) +
+				metricValue(metrics, "review_app_start_timeouts_total", smoke...)
+		}
+		Expect(responses).To(BeNumerically(">=", 1))
+		// The first visit found the review app scaled down, so it waited for it to start or timed out
+		Expect(starts).To(BeNumerically(">=", 1))
+
+		leader, err := controllerLeader()
+		Expect(err).NotTo(HaveOccurred())
+		metrics, err := podMetrics(leader)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(metricValue(metrics, "review_app_deployments", append(smoke, `state="running"`)...)).To(BeEquivalentTo(1))
+		Expect(metricValue(metrics, "review_app_scaled_total", append(smoke, `direction="up"`)...)).To(BeNumerically(">=", 1))
+	})
+
 	It("scales the review app down when it is no longer visited", func() {
 		// After scaleDownAfter has passed since the last visit
 		Eventually(replicas, 3*time.Minute, 5*time.Second).Should(Equal("0"))
 	})
 
 	It("keeps starting review apps when the leading controller stops", func() {
-		// The controller replica that holds the leader election Lease, whose holder is
-		// <pod name>_<random ID>
-		leader := func() (string, error) {
-			holder, err := kubectl("get", "lease", "80807133.reviewapps.william.nu", "-n", namespace,
-				"-o", "jsonpath={.spec.holderIdentity}")
-			pod, _, _ := strings.Cut(holder, "_")
-			return pod, err
-		}
-
-		stopped, err := leader()
+		stopped, err := controllerLeader()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stopped).To(HavePrefix("review-app-operator-controller-manager-"))
 
@@ -262,7 +316,7 @@ var _ = Describe("Review App Operator", Ordered, func() {
 
 		// The stopping leader hands over right away, instead of the other replica waiting
 		// 15 seconds for its Lease to expire
-		Eventually(leader, 30*time.Second, 500*time.Millisecond).Should(And(
+		Eventually(controllerLeader, 30*time.Second, 500*time.Millisecond).Should(And(
 			HavePrefix("review-app-operator-controller-manager-"), Not(Equal(stopped))))
 		_, _ = fmt.Fprintf(GinkgoWriter, "the other controller replica took over after %s\n", time.Since(start))
 		Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))

@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
+	"github.com/wille/review-app-operator/internal/metrics"
 )
 
 // The activity of a review app deployment is recorded in a Lease named like the Deployment. The
@@ -259,6 +260,9 @@ func (r *PullRequestReconciler) deleteInactive(
 	}
 	if err := client.IgnoreNotFound(err); err != nil {
 		return false, 0, err
+	}
+	if err == nil {
+		metrics.Deleted.WithLabelValues(reviewApp.Name).Inc()
 	}
 
 	ctrl.LoggerFrom(ctx).Info("Deleted inactive review app",
