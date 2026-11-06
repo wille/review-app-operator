@@ -50,6 +50,13 @@ func createOrUpdatePullRequest(
 		Name:      desiredPr.Name,
 	}
 
+	// Fail right away instead of deploying a review app that doesn't run the image
+	if err := utils.CheckTargetContainers(*reviewApp); err != nil {
+		log.Error(err, "Invalid ReviewAppConfig")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return nil, err
+	}
+
 	for _, deployment := range reviewApp.Spec.Deployments {
 		for _, container := range deployment.Template.Spec.Containers {
 			// The image repo and name defined in the ReviewAppConfig must match the deployed image

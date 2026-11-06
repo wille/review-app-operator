@@ -22,20 +22,34 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Deployments is a deployment of the review apps. Its target container runs the image of the pull request
 type Deployments struct {
+	// Name is the name of the deployment, which must be different for each deployment
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name,omitempty"`
 
+	// TargetContainerName is the container of the template that runs the image of the pull request.
+	// The API server can't check that the template has it, as the rule would be too costly for
+	// the unlimited containers of a pod, so deploys fail when it doesn't
+	// +kubebuilder:validation:MaxLength=63
 	TargetContainerName string `json:"targetContainerName"`
-	TargetContainerPort int32  `json:"targetContainerPort"`
+
+	// TargetContainerPort is the port of the target container that the forwarder sends requests to
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	TargetContainerPort int32 `json:"targetContainerPort"`
 
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	Replicas int32 `json:"replicas,omitempty"`
 	// +optional
 	StartOnDeploy bool `json:"startOnDeploy,omitempty"`
+
+	// ScaleDownAfter overrides the scaleDownAfter of the ReviewAppConfig for this deployment
 	// +optional
-	// ConnectionTimeout metav1.Duration `json:"connectionTimeout,omitempty"`
-	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$`
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
 	// HostTemplates must contain {{.BranchName}} or {{.RandomID}}, and may only use the
@@ -62,18 +76,35 @@ type Deployments struct {
 type ReviewAppConfigSpec struct {
 	// +optional
 	StartOnDeploy bool `json:"startOnDeploy,omitempty"`
+
+	// ConnectionTimeout is how long the forwarder waits for a review app to start before it asks
+	// browsers to reload, and answers other requests with 503 Service Unavailable. It overrides
+	// the --connection-timeout of the forwarder
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$`
 	ConnectionTimeout metav1.Duration `json:"connectionTimeout,omitempty"`
+
+	// ScaleDownAfter scales down the deployments of a review app that receive no requests for
+	// this long. Deployments are not scaled down if it is not set
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$`
 	ScaleDownAfter metav1.Duration `json:"scaleDownAfter,omitempty"`
 
 	// DeleteAfter deletes the review app of a pull request that has neither been deployed nor
 	// received traffic for this long, like when the webhook could not delete it as the pull
 	// request closed. The next deploy creates it again. Review apps are not deleted if it is not set
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$`
 	DeleteAfter metav1.Duration `json:"deleteAfter,omitempty"`
 
+	// Deployments are the deployments of each review app. Their names must be different, as they
+	// are part of the names of the Deployments
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:XValidation:rule="self.all(d, self.filter(e, (has(e.name) ? e.name : '') == (has(d.name) ? d.name : '')).size() == 1)",message="deployments must have different names"
 	Deployments []Deployments `json:"deployments"`
 }
 

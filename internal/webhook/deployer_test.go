@@ -150,6 +150,17 @@ var _ = Describe("Deploy webhook", func() {
 		Expect(deploy(5*time.Second, "nginx:2")).To(Succeed())
 	})
 
+	It("fails right away when the template doesn't have the target container", func() {
+		reviewApp.Spec.Deployments[0].TargetContainerName = "wbe"
+		Expect(c.Update(context.Background(), reviewApp)).To(Succeed())
+		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:1"))).To(Succeed())
+
+		err := deploy(5*time.Second, "nginx:2")
+
+		Expect(err).To(MatchError(ContainSubstring(`targetContainerName is not a container of the template of deployment "web"`)))
+		Expect(err).NotTo(MatchError(context.DeadlineExceeded))
+	})
+
 	It("persists the deploy information when creating the PullRequest", func() {
 		Expect(c.Create(context.Background(), rolledOutDeployment("nginx:2"))).To(Succeed())
 

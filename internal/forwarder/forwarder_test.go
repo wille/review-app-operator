@@ -424,6 +424,23 @@ var _ = Describe("Forwarder", func() {
 			Expect(rec.Code).To(Equal(http.StatusServiceUnavailable))
 			Expect(rec.Header().Get("Retry-After")).NotTo(BeEmpty())
 		})
+
+		It("waits for the connection timeout of the ReviewAppConfig instead", func() {
+			fwd.ConnectionTimeout = time.Minute
+
+			var reviewApp reviewapps.ReviewAppConfig
+			Expect(fwd.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app"}, &reviewApp)).To(Succeed())
+			reviewApp.Spec.ConnectionTimeout = metav1.Duration{Duration: time.Second}
+			Expect(fwd.Update(context.Background(), &reviewApp)).To(Succeed())
+
+			req := httptest.NewRequest(http.MethodGet, "http://feature.example.com/api", nil)
+			rec := httptest.NewRecorder()
+			start := time.Now()
+			fwd.ServeHTTP(rec, req)
+
+			Expect(rec.Code).To(Equal(http.StatusServiceUnavailable))
+			Expect(time.Since(start)).To(BeNumerically("~", time.Second, 2*time.Second))
+		})
 	})
 
 	It("does not re-send a request that reached the review app", func() {

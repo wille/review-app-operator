@@ -286,7 +286,7 @@ func (fwd Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.Out.Header.Set("X-Review-App", pr.Labels["app.kubernetes.io/part-of"])
 		},
 		Transport: startingTransport{
-			timeout: fwd.ConnectionTimeout,
+			timeout: connectionTimeout(&reviewApp, fwd.ConnectionTimeout),
 			waiting: func(attempt int, err error) {
 				if attempt%5 == 0 {
 					log.Info(fmt.Sprintf("Connection attempt: %s: %s", fwd.deploymentStatus(r.Context(), log, deployment), err))
@@ -323,6 +323,15 @@ func scaleDownAfter(reviewApp *reviewapps.ReviewAppConfig, deployment string) ti
 		}
 	}
 	return reviewApp.Spec.ScaleDownAfter.Duration
+}
+
+// connectionTimeout returns how long to wait for a review app to start, which the ReviewAppConfig
+// can set for its review apps, like for ones that are slow to start
+func connectionTimeout(reviewApp *reviewapps.ReviewAppConfig, defaultTimeout time.Duration) time.Duration {
+	if reviewApp.Spec.ConnectionTimeout.Duration > 0 {
+		return reviewApp.Spec.ConnectionTimeout.Duration
+	}
+	return defaultTimeout
 }
 
 // holderIdentity names the forwarder that last renewed a Lease, which is its pod name

@@ -29,8 +29,10 @@ spec:
           spec:
             properties:
               connectionTimeout:
+                pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$
                 type: string
               deleteAfter:
+                pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$
                 type: string
               deployments:
                 items:
@@ -45,14 +47,17 @@ spec:
                       format: int32
                       type: integer
                     name:
+                      maxLength: 63
                       type: string
                     progressDeadlineSeconds:
                       format: int32
                       type: integer
                     replicas:
                       format: int32
+                      minimum: 0
                       type: integer
                     scaleDownAfter:
+                      pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$
                       type: string
                     startOnDeploy:
                       type: boolean
@@ -75,9 +80,12 @@ spec:
                           type: string
                       type: object
                     targetContainerName:
+                      maxLength: 63
                       type: string
                     targetContainerPort:
                       format: int32
+                      maximum: 65535
+                      minimum: 1
                       type: integer
                     template:
                       properties:
@@ -4029,9 +4037,15 @@ spec:
                   - targetContainerPort
                   - template
                   type: object
+                maxItems: 32
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: deployments must have different names
+                  rule: 'self.all(d, self.filter(e, (has(e.name) ? e.name : '''')
+                    == (has(d.name) ? d.name : '''')).size() == 1)'
               scaleDownAfter:
+                pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$
                 type: string
               startOnDeploy:
                 type: boolean

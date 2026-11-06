@@ -18,7 +18,7 @@ The Review App Operator consists of three components:
 
 ### Prerequisites
 
-- Access to a Kubernetes v1.11.3+ cluster.
+- Access to a Kubernetes v1.30+ cluster.
 - Familiarity with Helm charts.
 - An Ingress controller like [ingress-nginx](https://github.com/kubernetes/ingress-nginx) with [cert-manager](https://cert-manager.io).
 
@@ -83,6 +83,7 @@ metadata:
 spec:
   scaleDownAfter: 1h # Scale down review apps that receive no traffic for an hour
   deleteAfter: 168h # Delete review apps that are neither deployed nor visited for a week
+  connectionTimeout: 30s # Wait for review apps to start for 30 seconds before asking browsers to reload, instead of the forwarder's --connection-timeout
   deployments:
     - name: test
       targetContainerName: test # Update this container when a Pull request is opened or updated
@@ -110,6 +111,14 @@ Create this ReviewAppConfig
 > See the [ReviewAppConfig sample](/config/samples/rac.william.nu_v1alpha1_reviewappconfig.yaml) for a more detailed example.
 >
 > Hostnames can be templated with `{{.ReviewAppConfig}}`, `{{.BranchName}}`, `{{.DeploymentName}}`, `{{.PullRequestNumber}}` and `{{.RandomID}}`, and must contain `{{.BranchName}}` or `{{.RandomID}}`. Other than the variables, host templates may only contain lowercase letters, digits, `-` and `.`, and `kubectl apply` rejects templates that don't
+
+`kubectl apply` also rejects ReviewAppConfigs with:
+
+- durations that aren't like `30m`, `2h` or `1h30m`, or are negative, in `scaleDownAfter`, `deleteAfter` and `connectionTimeout`
+- deployments with the same name, or more than one without a name
+- a `targetContainerPort` that isn't between 1 and 65535, or negative `replicas`
+
+A `targetContainerName` that isn't a container of the template fails deploys, as the API server can't check it: the `Reconciled` condition of the pull requests has the reason `TargetContainerNotFound`.
 
 ### Random hostnames
 

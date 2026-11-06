@@ -172,10 +172,14 @@ func (r *PullRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	// Record the error on the PullRequest, where the webhook reports it to CI. Overrides of
-	// deployments that the ReviewAppConfig doesn't have don't stop the review app from running,
-	// as retrying doesn't help, but fail its deploys
+	// Record the error on the PullRequest, where the webhook reports it to CI. Target containers
+	// that the templates don't have, and overrides of deployments that the ReviewAppConfig
+	// doesn't have, don't stop the review app from running, as retrying doesn't help, but fail
+	// its deploys
 	conditionErr := reconcileErr
+	if conditionErr == nil {
+		conditionErr = utils.CheckTargetContainers(reviewApp)
+	}
 	if conditionErr == nil {
 		conditionErr = unknownOverrides(&reviewApp, pr)
 	}
@@ -221,6 +225,7 @@ const (
 	reasonInvalidHostTemplate     = "InvalidHostTemplate"
 	reasonNameConflict            = "NameConflict"
 	reasonUnknownDeployment       = "UnknownDeployment"
+	reasonTargetContainerNotFound = "TargetContainerNotFound"
 	reasonReconcileFailed         = "ReconcileFailed"
 )
 
@@ -254,6 +259,8 @@ func setReconciledCondition(pr *reviewapps.PullRequest, err error) {
 			condition.Reason = reasonNameConflict
 		case errors.Is(err, errUnknownDeployment):
 			condition.Reason = reasonUnknownDeployment
+		case errors.Is(err, utils.ErrTargetContainerNotFound):
+			condition.Reason = reasonTargetContainerNotFound
 		default:
 			condition.Reason = reasonReconcileFailed
 		}

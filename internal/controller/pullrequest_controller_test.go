@@ -371,6 +371,24 @@ var _ = Describe("PullRequest Controller", func() {
 			expectCondition("InvalidHostTemplate", "too long for a DNS label")
 		})
 
+		It("records a target container that the template doesn't have, and still runs the review app", func() {
+			reviewApp = newReviewApp("{{.BranchName}}.failing.example.com")
+			reviewApp.Spec.Deployments[0].TargetContainerName = "ap"
+			Expect(k8sClient.Create(ctx, reviewApp)).To(Succeed())
+			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
+
+			objectMeta := metav1.ObjectMeta{Name: utils.GetDeploymentName(reviewApp, pr, "web"), Namespace: namespace}
+			DeferCleanup(func() {
+				// envtest runs no garbage collector to delete what the PullRequest owns
+				for _, obj := range []client.Object{&appsv1.Deployment{ObjectMeta: objectMeta}, &corev1.Service{ObjectMeta: objectMeta}, &coordinationv1.Lease{ObjectMeta: objectMeta}} {
+					Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+				}
+			})
+
+			expectCondition("TargetContainerNotFound", `deployment "web" in ReviewAppConfig failing: "ap"`)
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(&appsv1.Deployment{ObjectMeta: objectMeta}), &appsv1.Deployment{})).To(Succeed())
+		})
+
 		It("records a missing ReviewAppConfig on the PullRequest", func() {
 			Expect(k8sClient.Create(ctx, pr)).To(Succeed())
 

@@ -1,7 +1,12 @@
 package utils
 
 import (
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
+
+	corev1 "k8s.io/api/core/v1"
 
 	reviewapps "github.com/wille/review-app-operator/api/v1alpha1"
 )
@@ -43,4 +48,25 @@ func IsImageAllowed(reviewApp reviewapps.ReviewAppConfig, image string) bool {
 	}
 
 	return true
+}
+
+// ErrTargetContainerNotFound is returned when the target container of a deployment is not in its
+// template, so that the image of the pull request would never be deployed
+var ErrTargetContainerNotFound = errors.New("targetContainerName is not a container of the template")
+
+// CheckTargetContainers returns an error when a deployment of the ReviewAppConfig doesn't have its
+// target container. The CRD can't check it, as the rule would be too costly for the API server
+func CheckTargetContainers(reviewApp reviewapps.ReviewAppConfig) error {
+	for _, deployment := range reviewApp.Spec.Deployments {
+		found := slices.ContainsFunc(deployment.Template.Spec.Containers, func(container corev1.Container) bool {
+			return container.Name == deployment.TargetContainerName
+		})
+
+		if !found {
+			return fmt.Errorf("%w of deployment %q in ReviewAppConfig %s: %q",
+				ErrTargetContainerNotFound, deployment.Name, reviewApp.Name, deployment.TargetContainerName)
+		}
+	}
+
+	return nil
 }
