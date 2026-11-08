@@ -273,6 +273,17 @@ jobs:
 - An ID token only deploys and deletes the review app of its own pull request. A pull request from a fork gets a token for the repository it is opened in, with the branch name of the fork, so it can't replace or delete the review app of another pull request whose branch has the same name. If a closed pull request left its review app behind, a new pull request of the same branch is refused until that PullRequest is deleted.
 - Once every workflow deploys with ID tokens, set `webhook.acceptSecret: false` in the chart, so that the webhook secret can't deploy anymore and isn't created.
 
+#### Pull requests from forks
+
+A pull request from a fork can only deploy when GitHub gives its workflow an ID token or the webhook secret, which it doesn't by default. GitHub makes the write permissions of `pull_request` workflows from forks read only, and an ID token needs `id-token: write`:
+
+- In public repositories, pull requests from forks get neither an ID token nor secrets, so they can't deploy.
+- In private repositories, they get an ID token when **Send write tokens to workflows from pull requests** is enabled in the Actions settings of the repository or organization. They can then deploy and delete the review app of their own branch, with an image of the image repository of the ReviewAppConfig, and their review apps run with its env and secrets.
+- **Send secrets to workflows from pull requests** gives them the webhook secret, which deploys and deletes every review app. Set `webhook.acceptSecret: false` before enabling it.
+- `pull_request_target` workflows run for pull requests from forks with the permissions and secrets of the repository, so the webhook refuses their ID tokens. Don't deploy pull requests from forks in them with the webhook secret.
+
+The ID token doesn't tell whether the branch is in a fork, so the webhook can't refuse pull requests from forks that GitHub gives an ID token.
+
 > [!NOTE]
 > The action and the operator should be updated together, older actions are rejected by newer operators
 
