@@ -237,6 +237,10 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The pull request whose review app the webhook may deploy and delete, or 0 for any. The
+	// webhook secret allows every review app, and an ID token only the review app of its pull request
+	number := 0
+
 	// An ID token only allows deploys of the pull requests of the repositories of the ReviewAppConfig
 	if claims != nil {
 		if err := authorizeIDToken(&reviewApp, *claims, webhook); err != nil {
@@ -245,6 +249,10 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
+
+		// The token proves the pull request of its workflow, but not that the branch is in the
+		// repository, as pull requests from forks have the branch names of the fork
+		number = webhook.PullRequestNumber
 	}
 
 	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)
@@ -259,10 +267,11 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		log.Info("Delete webhook received", "name", name)
 
-		if err := deletePullRequestByName(wh.Client, name, webhook.BranchName); err != nil {
-			if apierrors.IsNotFound(err) || errors.Is(err, errNameConflict) {
+		if err := deletePullRequestByName(wh.Client, name, webhook.BranchName, number); err != nil {
+			if apierrors.IsNotFound(err) || errors.Is(err, errNameConflict) || errors.Is(err, errOtherPullRequest) {
 				// Closing a pull request without a review app, like when its first deploy
-				// failed or it was already deleted, leaves nothing to do
+				// failed, it was already deleted or the branch has the review app of another
+				// pull request, leaves nothing to do
 				log.Info("No review app to delete", "name", name, "reason", err.Error())
 				http.Error(w, fmt.Sprintf("No review app to delete for branch \"%s\"", webhook.BranchName), http.StatusOK)
 				return
@@ -296,13 +305,18 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			podInspector{reader: wh.PodReader, logs: wh.PodLogs},
 			&reviewApp,
 			webhook,
+			number,
 			w,
 		)
 		if err != nil {
 			// The status code can't be changed once the deployment progress has started
 			// streaming, so clients must check that the response ends with the review app URL
 			log.Error(err, "Error deploying", "name", name)
-			deployed(metrics.DeployFailed)
+			if errors.Is(err, errOtherPullRequest) {
+				deployed(metrics.DeployRejected)
+			} else {
+				deployed(metrics.DeployFailed)
+			}
 			http.Error(w, "Error deploying: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

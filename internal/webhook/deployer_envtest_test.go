@@ -110,7 +110,7 @@ var _ = Describe("Deploy webhook with an API server", Ordered, func() {
 				Image:             "nginx:2",
 				PullRequestNumber: 42,
 				Sender:            sender,
-			}, httptest.NewRecorder())
+			}, 0, httptest.NewRecorder())
 			Expect(err).To(MatchError(context.DeadlineExceeded))
 		}
 
@@ -163,7 +163,7 @@ var _ = Describe("Deploy webhook with an API server", Ordered, func() {
 		_, err := createOrUpdatePullRequest(deployCtx, c, podInspector{}, reviewApp, WebhookBody{
 			BranchName: "feature",
 			Image:      "nginx:2",
-		}, httptest.NewRecorder())
+		}, 0, httptest.NewRecorder())
 		Expect(err).To(MatchError(ContainSubstring("the review app can't be deployed: invalid host template")))
 	})
 })

@@ -27,13 +27,15 @@ func writeFlush(w http.ResponseWriter, s string) {
 }
 
 // createOrUpdatePullRequest ensures that the desired pull request exists and is up to date
-// and streams the status of the deployments to the response writer
+// and streams the status of the deployments to the response writer. It only updates the review
+// app of pull request number, or of any pull request when number is 0
 func createOrUpdatePullRequest(
 	ctx context.Context,
 	c client.Client,
 	pods podInspector,
 	reviewApp *reviewapps.ReviewAppConfig,
 	webhook WebhookBody,
+	number int,
 	w http.ResponseWriter,
 ) (*reviewapps.PullRequest, error) {
 	desiredPr := utils.PullRequestFor(*reviewApp, utils.PullRequestCreationOptions{
@@ -110,6 +112,14 @@ func createOrUpdatePullRequest(
 			return nil, err
 		}
 	} else {
+		// Checked on the PullRequest that is patched, as a concurrent deploy of another pull
+		// request could create it after the name conflict check
+		if err := checkPullRequestNumber(&existingPr, number); err != nil {
+			log.Error(err, "Review app of another pull request")
+			w.WriteHeader(http.StatusConflict)
+			return nil, err
+		}
+
 		// Patch spec and labels without touching the status subresource so we
 		// don't clobber controller-maintained fields such as the hostnames the
 		// forwarder's host index depends on.

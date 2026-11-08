@@ -131,7 +131,7 @@ var _ = Describe("Deploy webhook", func() {
 			Image:             image,
 			PullRequestNumber: 42,
 			Sender:            "https://github.com/octocat",
-		}, httptest.NewRecorder())
+		}, 0, httptest.NewRecorder())
 
 		return err
 	}

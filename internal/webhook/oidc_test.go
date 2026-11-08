@@ -169,13 +169,13 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 		}
 	})
 
-	// serve sends a webhook for pull request 42 of the feature branch with the ID token
-	serve := func(method, token string) *httptest.ResponseRecorder {
+	// serveFor sends a webhook for a pull request of the feature branch with the ID token
+	serveFor := func(method, token string, number int) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]any{
 			"reviewAppName":      "app",
 			"reviewAppNamespace": "default",
 			"branchName":         "feature",
-			"pullRequestNumber":  42,
+			"pullRequestNumber":  number,
 			"image":              "nginx:2",
 			"method":             method,
 			"timestamp":          time.Now().Unix(),
@@ -191,6 +191,18 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 		server.ServeHTTP(rec, req)
 
 		return rec
+	}
+
+	// serve sends a webhook for pull request 42 of the feature branch with the ID token
+	serve := func(method, token string) *httptest.ResponseRecorder {
+		return serveFor(method, token, 42)
+	}
+
+	// pullRequest returns the review app of the feature branch
+	pullRequest := func() *reviewapps.PullRequest {
+		var pr reviewapps.PullRequest
+		Expect(c.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app-feature"}, &pr)).To(Succeed())
+		return &pr
 	}
 
 	It("deploys the pull request of a repository that the ReviewAppConfig allows", func() {
@@ -231,6 +243,52 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 		Entry("from another pull request", map[string]any{"ref": "refs/pull/41/merge"},
 			"the ID token is from refs/pull/41/merge, not pull request 42"),
 	)
+
+	// The ID token of a pull request from a fork is for the repository of the ReviewAppConfig, with
+	// the branch name of the fork, which can be the branch name of another pull request
+	Describe("from a fork with the branch name of another pull request", func() {
+		forkToken := func() string {
+			return issuer.sign(map[string]any{"ref": "refs/pull/43/merge"})
+		}
+
+		BeforeEach(func() {
+			Expect(serve(http.MethodPost, issuer.sign(nil)).Code).To(Equal(http.StatusCreated))
+		})
+
+		It("doesn't replace the review app of the other pull request", func() {
+			rejected := metrics.Deploys.WithLabelValues("app", metrics.DeployRejected)
+			rejectedBefore := testutil.ToFloat64(rejected)
+
+			rec := serveFor(http.MethodPost, forkToken(), 43)
+
+			Expect(rec.Code).To(Equal(http.StatusConflict))
+			Expect(rec.Body.String()).To(ContainSubstring(`branch "feature" has the review app of pull request 42, not 43`))
+			Expect(testutil.ToFloat64(rejected) - rejectedBefore).To(BeEquivalentTo(1))
+			Expect(pullRequest().Status.PullRequestNumber).To(Equal(42))
+		})
+
+		It("doesn't delete the review app of the other pull request", func() {
+			rec := serveFor(http.MethodDelete, forkToken(), 43)
+
+			Expect(rec.Code).To(Equal(http.StatusOK))
+			Expect(rec.Body.String()).To(ContainSubstring(`No review app to delete for branch "feature"`))
+			Expect(pullRequest().Status.PullRequestNumber).To(Equal(42))
+		})
+	})
+
+	It("deploys a review app that was last deployed without its pull request number", func() {
+		Expect(c.Create(context.Background(), &reviewapps.PullRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-feature", Namespace: "default"},
+			Spec:       reviewapps.PullRequestSpec{ReviewAppConfigRef: "app", BranchName: "feature", ImageName: "nginx:1"},
+		})).To(Succeed())
+
+		Expect(serve(http.MethodPost, issuer.sign(nil)).Code).To(Equal(http.StatusAccepted))
+
+		// It is the review app of the pull request from then on
+		Expect(pullRequest().Status.PullRequestNumber).To(Equal(42))
+		Expect(serveFor(http.MethodPost, issuer.sign(map[string]any{"ref": "refs/pull/43/merge"}), 43).Code).
+			To(Equal(http.StatusConflict))
+	})
 
 	It("creates no review app for a forbidden ID token", func() {
 		rejected := metrics.Deploys.WithLabelValues("app", metrics.DeployRejected)
