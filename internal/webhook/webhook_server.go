@@ -238,21 +238,20 @@ func (wh WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The pull request whose review app the webhook may deploy and delete, or 0 for any. The
-	// webhook secret allows every review app, and an ID token only the review app of its pull request
+	// webhook secret allows every review app, and an ID token only the review app of its pull
+	// request, as it doesn't prove that the branch is in the repository: pull requests from forks
+	// have the branch names of the fork
 	number := 0
 
 	// An ID token only allows deploys of the pull requests of the repositories of the ReviewAppConfig
 	if claims != nil {
-		if err := authorizeIDToken(&reviewApp, *claims, webhook); err != nil {
+		number, err = authorizeIDToken(&reviewApp, *claims, webhook, r.Method)
+		if err != nil {
 			log.Error(err, "Forbidden webhook", "repository", claims.Repository)
 			deployed(metrics.DeployRejected)
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
-
-		// The token proves the pull request of its workflow, but not that the branch is in the
-		// repository, as pull requests from forks have the branch names of the fork
-		number = webhook.PullRequestNumber
 	}
 
 	pullRequestResourceName := utils.GetResourceName(reviewApp.Name, webhook.BranchName)

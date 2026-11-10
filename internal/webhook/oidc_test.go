@@ -82,6 +82,7 @@ func (i *fakeIssuer) idTokenClaims(claims map[string]any) map[string]any {
 		"repository": "octo-org/app",
 		"event_name": "pull_request",
 		"head_ref":   "feature",
+		"base_ref":   "main",
 		"ref":        "refs/pull/42/merge",
 	}
 	maps.Copy(defaults, claims)
@@ -227,6 +228,34 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 		Expect(rec.Body.String()).To(Equal("Pull request deleted\n"))
 	})
 
+	// The ID token of a merged pull request is for the branch it was merged into
+	It("deletes the review app of a merged pull request", func() {
+		Expect(serve(http.MethodPost, issuer.sign(nil)).Code).To(Equal(http.StatusCreated))
+
+		rec := serve(http.MethodDelete, issuer.sign(map[string]any{"ref": "refs/heads/main"}))
+
+		Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+		Expect(rec.Body.String()).To(Equal("Pull request deleted\n"))
+	})
+
+	DescribeTable("refuses to delete with ID tokens that don't allow it",
+		func(claims map[string]any, message string) {
+			Expect(serve(http.MethodPost, issuer.sign(nil)).Code).To(Equal(http.StatusCreated))
+
+			rec := serve(http.MethodDelete, issuer.sign(claims))
+
+			Expect(rec.Code).To(Equal(http.StatusForbidden))
+			Expect(rec.Body.String()).To(ContainSubstring(message))
+			Expect(pullRequest().Status.PullRequestNumber).To(Equal(42))
+		},
+		Entry("from a branch that the pull request isn't merged into", map[string]any{"ref": "refs/heads/release"},
+			"the ID token is from refs/heads/release, not pull request 42"),
+		Entry("from a branch without a pull request", map[string]any{"ref": "refs/heads/main", "base_ref": ""},
+			"the ID token is from refs/heads/main, not pull request 42"),
+		Entry("from a merged pull request of another branch", map[string]any{"ref": "refs/heads/main", "head_ref": "other"},
+			`the ID token is from the branch "other", not "feature"`),
+	)
+
 	DescribeTable("refuses ID tokens that don't allow the deploy",
 		func(claims map[string]any, message string) {
 			rec := serve(http.MethodPost, issuer.sign(claims))
@@ -242,6 +271,8 @@ var _ = Describe("Deploy webhook with GitHub Actions ID tokens", func() {
 			`the ID token is from the branch "main", not "feature"`),
 		Entry("from another pull request", map[string]any{"ref": "refs/pull/41/merge"},
 			"the ID token is from refs/pull/41/merge, not pull request 42"),
+		Entry("from a merged pull request", map[string]any{"ref": "refs/heads/main"},
+			`the ID token is from the merged pull request of the branch "feature", which can only delete its review app`),
 	)
 
 	// The ID token of a pull request from a fork is for the repository of the ReviewAppConfig, with

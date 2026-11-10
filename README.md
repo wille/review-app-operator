@@ -269,8 +269,8 @@ jobs:
 
 - The webhook verifies the ID tokens with the keys of GitHub Actions, which it fetches when the first deploy with an ID token arrives. Set `webhook.oidc.issuer` in the chart for a GitHub Enterprise, or empty to only accept the webhook secret.
 - The tokens are requested for the audience `review-app-operator`, which the `oidc_audience` input of the action and `webhook.oidc.audience` of the chart change.
-- Only `pull_request` workflows can deploy, for the branch and the pull request of their token.
-- An ID token only deploys and deletes the review app of its own pull request. A pull request from a fork gets a token for the repository it is opened in, with the branch name of the fork, so it can't replace or delete the review app of another pull request whose branch has the same name. If a closed pull request left its review app behind, a new pull request of the same branch is refused until that PullRequest is deleted.
+- Only `pull_request` workflows can deploy, for the branch and the pull request of their token. Once a pull request is merged, its token is for the branch it was merged into instead of the pull request, which can only delete the review app of its branch.
+- An ID token only deploys and deletes the review app of its own pull request, except the token of a merged pull request, which deletes the review app of its branch. A pull request from a fork gets a token for the repository it is opened in, with the branch name of the fork, so it can't replace or delete the review app of another pull request whose branch has the same name. If a closed pull request left its review app behind, a new pull request of the same branch is refused until that PullRequest is deleted.
 - Once every workflow deploys with ID tokens, set `webhook.acceptSecret: false` in the chart, so that the webhook secret can't deploy anymore and isn't created.
 
 #### Pull requests from forks

@@ -44,7 +44,11 @@ type githubClaims struct {
 	// HeadRef is the branch of the pull request
 	HeadRef string `json:"head_ref"`
 
-	// Ref is refs/pull/<number>/merge for pull request workflows
+	// BaseRef is the branch that the pull request is merged into
+	BaseRef string `json:"base_ref"`
+
+	// Ref is refs/pull/<number>/merge for pull request workflows, and the base branch, like
+	// refs/heads/main, once the pull request is merged
 	Ref string `json:"ref"`
 }
 
@@ -96,28 +100,40 @@ func (v *IDTokenVerifier) verify(ctx context.Context, rawToken string) (githubCl
 var errForbidden = errors.New("forbidden")
 
 // authorizeIDToken returns an error unless the ID token is from the pull request workflow of a
-// repository that the ReviewAppConfig allows, for the branch and pull request of the webhook
-func authorizeIDToken(reviewApp *reviewapps.ReviewAppConfig, claims githubClaims, webhook WebhookBody) error {
+// repository that the ReviewAppConfig allows, for the branch and pull request of the webhook.
+// It returns the number of the pull request that the token proves, which is 0 for a merged pull
+// request, whose token is for the branch that it was merged into instead of the pull request
+func authorizeIDToken(reviewApp *reviewapps.ReviewAppConfig, claims githubClaims, webhook WebhookBody, method string) (int, error) {
 	allowed := slices.ContainsFunc(reviewApp.Spec.Repositories, func(repository string) bool {
 		// GitHub repository names are case insensitive
 		return strings.EqualFold(repository, claims.Repository)
 	})
 	if !allowed {
-		return fmt.Errorf("%w: the ReviewAppConfig %s does not allow deploys from %s, which can be added to its spec.repositories",
+		return 0, fmt.Errorf("%w: the ReviewAppConfig %s does not allow deploys from %s, which can be added to its spec.repositories",
 			errForbidden, reviewApp.Name, claims.Repository)
 	}
 
 	if claims.EventName != "pull_request" {
-		return fmt.Errorf("%w: the ID token is from a %s workflow, not a pull_request workflow", errForbidden, claims.EventName)
+		return 0, fmt.Errorf("%w: the ID token is from a %s workflow, not a pull_request workflow", errForbidden, claims.EventName)
 	}
 
 	if claims.HeadRef != webhook.BranchName {
-		return fmt.Errorf("%w: the ID token is from the branch %q, not %q", errForbidden, claims.HeadRef, webhook.BranchName)
+		return 0, fmt.Errorf("%w: the ID token is from the branch %q, not %q", errForbidden, claims.HeadRef, webhook.BranchName)
 	}
 
-	if claims.Ref != "refs/pull/"+strconv.Itoa(webhook.PullRequestNumber)+"/merge" {
-		return fmt.Errorf("%w: the ID token is from %s, not pull request %d", errForbidden, claims.Ref, webhook.PullRequestNumber)
+	if claims.Ref == "refs/pull/"+strconv.Itoa(webhook.PullRequestNumber)+"/merge" {
+		return webhook.PullRequestNumber, nil
 	}
 
-	return nil
+	// Closing a merged pull request deletes its review app with a token for the base branch, which
+	// can't tell the pull request, so it deletes the review app of the branch of any pull request
+	if claims.BaseRef != "" && claims.Ref == "refs/heads/"+claims.BaseRef {
+		if method == http.MethodDelete {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("%w: the ID token is from the merged pull request of the branch %q, which can only delete its review app",
+			errForbidden, claims.HeadRef)
+	}
+
+	return 0, fmt.Errorf("%w: the ID token is from %s, not pull request %d", errForbidden, claims.Ref, webhook.PullRequestNumber)
 }
