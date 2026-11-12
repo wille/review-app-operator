@@ -31,25 +31,6 @@ func imageRepository(image string) string {
 	return repo
 }
 
-// ImageHasDigest checks if the image has a digest
-func ImageHasDigest(image string) bool {
-	return strings.Contains(image, "@")
-}
-
-// IsImageAllowed checks if the image matches the base image set on the deployments in a ReviewAppConfig
-func IsImageAllowed(reviewApp reviewapps.ReviewAppConfig, image string) bool {
-	for _, d := range reviewApp.Spec.Deployments {
-		for _, c := range d.Template.Spec.Containers {
-			if d.TargetContainerName == c.Name &&
-				!IsSameImageRepo(c.Image, image) {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
 // ErrTargetContainerNotFound is returned when the target container of a deployment is not in its
 // template, so that the image of the pull request would never be deployed
 var ErrTargetContainerNotFound = errors.New("targetContainerName is not a container of the template")
