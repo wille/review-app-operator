@@ -110,6 +110,18 @@ The chart installs and upgrades the `ReviewAppConfig` and `PullRequest` CRDs. Un
 >
 > `--take-ownership` lets the release own the CRDs that it didn't create, and `--force-conflicts` lets Helm 4 change the fields that `kubectl apply --server-side` set. Later upgrades need neither.
 
+### Verifying the image
+
+The [release workflow](/.github/workflows/release.yml) signs the controller image with [cosign](https://github.com/sigstore/cosign), keyless, and attaches its SLSA provenance as an attestation. Releases up to `v0.4.2` aren't signed.
+
+```bash
+$ cosign verify ghcr.io/wille/review-app-operator:vX.Y.Z \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity https://github.com/wille/review-app-operator/.github/workflows/release.yml@refs/tags/vX.Y.Z
+```
+
+`cosign verify-attestation --type slsaprovenance1` with the same flags checks the provenance. The image `master` is signed with the identity `…/release.yml@refs/heads/master`, so a policy that only allows release tags doesn't let it through.
+
 ## Creating a Review App
 
 The Review App Controller introduces two new Kubernetes resources: `ReviewAppConfig` and `PullRequest`.
@@ -393,7 +405,7 @@ Publish a GitHub release tagged `vX.Y.Z` to build and push the controller image 
 $ gh release create vX.Y.Z --target master --generate-notes
 ```
 
-Every push to `master` also publishes the image `ghcr.io/wille/review-app-operator:master`.
+Every push to `master` also publishes the image `ghcr.io/wille/review-app-operator:master`. Both are signed, see [Verifying the image](#verifying-the-image).
 
 ### Helm chart
 
